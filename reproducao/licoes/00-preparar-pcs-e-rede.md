@@ -142,39 +142,65 @@ No PC `carga` (pc-lamp-5), gere uma chave SSH e copie-a para os demais (`ssh-cop
 
 As figuras do artigo comparam **timestamps de PCs diferentes** (ex.: `REQUEST_FORWARD` no fog1 e `NEW_PR_RECEIVED` no fog2). Um erro de 50 ms no relógio vira um erro de 50 ms na medida.
 
-A rede da instituição **não bloqueia NTP**. Num teste de 2026-11-14, servidores públicos (`time.google.com`, `a.st1.ntp.br`, `time.cloudflare.com`) responderam pelo cabo e pela Wi-Fi. Mesmo assim, os seis PCs estavam com `synchronized: no`, e o relógio do PC6 estava ~47 s adiantado. O `systemd-timesyncd` padrão não estava funcionando, e o chrony o substitui (D28).
+O Ubuntu 26.04 já traz o **chrony** instalado e ativo. O `systemd-timesyncd` nem vem instalado. Mesmo assim, **a configuração padrão não sincroniza no laboratório**: os seis PCs estavam com `synchronized: no`, e o relógio do PC6 estava ~47 s adiantado (D28).
 
-O `carga` sincroniza com a internet e serve a hora aos outros PCs pelo cabo. Assim, todos têm a mesma referência a 1 salto de rede, o que importa mais para as medidas do que a hora exata.
+A causa é o **NTS**. As fontes padrão são os servidores da Canonical, definidos em `/etc/chrony/sources.d/ubuntu-ntp-pools.sources`, e todas exigem NTS. Antes do primeiro pacote NTP, o NTS negocia chaves pela porta TCP 4460, e a rede da instituição **recusa** essa porta. Em 2026-11-16, no PC1:
 
-`todas$` instale o chrony. Ele substitui o `systemd-timesyncd`:
+- `chronyc -n sources` mostrava todas as fontes com `^?` e `Reach 0`;
+- `sudo chronyc -n authdata` mostrava `Atmp 14` e `Cook 0` em todas, ou seja, nenhuma negociação NTS deu certo;
+- a conexão em `185.125.190.121:4460` voltava `Connection refused`, com a rota padrão pelo `eno1` funcionando.
+
+Até a fonte que o roteador entrega por DHCP (`192.168.0.1`) aparece como NTS e nunca responde. Já o NTP comum (UDP 123) passa: num teste de 2026-11-14, servidores públicos (`time.google.com`, `a.st1.ntp.br`, `time.cloudflare.com`) responderam pelo cabo e pela Wi-Fi.
+
+Confira se é o seu caso:
 
 ```bash
-sudo apt install -y chrony
+timedatectl | grep synchronized    # "no"
+chronyc -n sources                 # todas as fontes "^?" com Reach 0
+sudo chronyc -n authdata           # Cook 0 em todas
 ```
 
-`carga$` em `/etc/chrony/chrony.conf`, comente as linhas `pool`/`server` existentes e acrescente:
+O `carga` sincroniza com servidores públicos, por NTP comum, e serve a hora aos outros PCs pelo cabo. Assim, todos têm a mesma referência a 1 salto de rede, o que importa mais para as medidas do que a hora exata.
 
+Não edite o `/etc/chrony/chrony.conf`. A nossa configuração fica em arquivos próprios: as fontes em `sources.d/`, que só aceita `server`, `pool` e `peer`, e o resto em `conf.d/`. O chrony não aceita comentário no fim de uma linha de diretiva, então os comentários ficam em linhas próprias.
+
+`todas$` desative as fontes NTS. O chrony só lê os arquivos `*.sources` desse diretório:
+
+```bash
+sudo mv /etc/chrony/sources.d/ubuntu-ntp-pools.sources{,.disabled}
 ```
+
+`carga$`:
+
+```bash
+sudo tee /etc/chrony/sources.d/microfog.sources <<'EOF'
 server time.google.com iburst
 server a.st1.ntp.br iburst
 server time.cloudflare.com iburst
-local stratum 10          # continua servindo a hora se a internet cair
+EOF
+sudo tee /etc/chrony/conf.d/microfog.conf <<'EOF'
+# Continua servindo a hora aos outros PCs se a internet cair
+local stratum 10
 allow 192.168.0.0/24
-makestep 1 3              # corrige o salto inicial (ex.: os 47 s do PC6) de uma vez
-```
-
-`demais$` (PCs 1–4 e 6) em `/etc/chrony/chrony.conf`, comente as linhas `pool`/`server` e acrescente:
-
-```
-server 192.168.0.15 iburst prefer
+# Corrige o salto inicial (ex.: os 47 s do PC6) de uma vez
 makestep 1 3
+EOF
+```
+
+`demais$` (PCs 1–4 e 6):
+
+```bash
+echo 'server 192.168.0.15 iburst prefer' | sudo tee /etc/chrony/sources.d/microfog.sources
+echo 'makestep 1 3' | sudo tee /etc/chrony/conf.d/microfog.conf
 ```
 
 ```bash
 sudo systemctl restart chrony
-chronyc sources        # no carga: um servidor público com '*'; nos demais: 192.168.0.15 com '*'
+chronyc -n sources     # no carga: um servidor público com '*'; nos demais: 192.168.0.15 com '*'
 chronyc tracking       # "System time" abaixo de 1 ms
 ```
+
+A fonte `192.168.0.1`, que vem do DHCP, continua na lista com `^?`. Isso é esperado: ela nunca responde e por isso não é escolhida.
 
 O IP `172.19.176.12`, que é o DNS do roteador do switch, também responde NTP. Ele fica como alternativa, mas estava ~1 s fora dos servidores públicos no teste, então não é a fonte principal.
 
@@ -263,6 +289,7 @@ git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
 | Wi-Fi não sobe | Falta `wpasupplicant` | `dpkg -l wpasupplicant` |
 | `docker: permission denied` | O usuário ainda não está no grupo `docker` | Saia e entre de novo; `groups` |
 | `chronyc sources` nos demais sem `*` em `192.168.0.15` | `allow` ausente no `carga`, ou o `carga` ainda não sincronizou | `chronyc sources -v`; no `carga`, `chronyc clients` |
+| Todas as fontes `^?` com `Reach 0`, e `Cook 0` no `sudo chronyc -n authdata` | Fontes NTS padrão do Ubuntu ainda ativas; a rede recusa a porta 4460 | `ls /etc/chrony/sources.d/`: o `ubuntu-ntp-pools.sources` deve estar renomeado (passo 5) |
 | `chronyc sources` no `carga` sem `*` | NTP bloqueado (não era o caso em 2026-11-14) ou DNS falhando | Teste com o IP direto, por exemplo `server 216.239.35.0 iburst` |
 
 ## Registro de execução
