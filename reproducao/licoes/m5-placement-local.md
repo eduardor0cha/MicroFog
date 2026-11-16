@@ -4,7 +4,7 @@
 
 Submeter um **Placement Request** do hcApp ao CE do **cloud1**, acompanhar todo o fluxo de processamento pelo log e chamar os dois serviços compostos da aplicação com sucesso.
 
-Por que o cloud1 e não um fog: com os tamanhos do M1, o hcApp (0,5 + 1,0 + 1,0 CPU, mais os sidecars) não cabe num fog de 4 vCPU que já roda Istio, CE e data stores. O cloud1 tem espaço. Começar por um placement que **não precisa** de forwarding deixa uma variável a menos. O forwarding é o M6.
+Por que começar pelo cloud1 (D23): ele tem os maiores nós (4 vCPU / 7 GB lógicos cada), e o hcApp (0,5 + 1,0 + 1,0 CPU, mais os sidecars) cabe lá com folga. Começar por um placement que **não precisa** de forwarding deixa uma variável a menos. Depois, o passo 5 repete o PR com entrada no fog1, onde Istio, CE e data stores já ocupam parte dos nós. O forwarding é o M6.
 
 ## Conceitos
 
@@ -69,7 +69,7 @@ Antes de submeter, consulte os recursos livres do cloud1:
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
-curl -s -H "$H" -H "cluster: cloud1" http://<IP_CLOUD1>/MicroFog/getClusterData | jq
+curl -s -H "$H" -H "cluster: cloud1" http://192.168.0.13/MicroFog/getClusterData | jq
 ```
 
 **Escreva a sua previsão**: em qual nó vai cada microserviço? (Os algoritmos estão em `placementlogic/DistributedPlacement.java`, ramo `V2`.)
@@ -85,7 +85,7 @@ cat > pr-hcapp.json <<'EOF'
 EOF
 
 curl -s -H "$H" -H "cluster: cloud1" -H 'Content-Type: application/json' \
-     -d @pr-hcapp.json http://<IP_CLOUD1>/MicroFog/addPR
+     -d @pr-hcapp.json http://192.168.0.13/MicroFog/addPR
 ```
 
 Esperado: `Placement Request Successfully Submitted`.
@@ -102,16 +102,29 @@ cloud1$ kubectl -n hcapp get pods -o wide -w
 ```bash
 # S1: hcm1 → hcm2
 curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
-     -X GET http://<IP_CLOUD1>/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+     -X GET http://192.168.0.13/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
 
 # S2: hcm1 → hcm3
 curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
-     -X POST http://<IP_CLOUD1>/DummyM/addData -d '{"message":[65,68,67],"dataProcessingTime":30}'
+     -X POST http://192.168.0.13/DummyM/addData -d '{"message":[65,68,67],"dataProcessingTime":30}'
 ```
 
 ### 5. Limpar
 
 Para repetir o experimento, apague o namespace da aplicação: `kubectl delete ns hcapp`. Confira no código se o CE guarda algum estado do placement anterior (no Redis ou em memória) e anote o que encontrar.
+
+### 6. Repetir com entrada no fog1
+
+Com o `hcapp` apagado, mude `entryClusters` para `["fog1"]` e submeta **ao fog1**. Antes, consulte os recursos livres do fog1 (`cluster: fog1` no `getClusterData`) e faça uma nova previsão: agora o cluster de entrada já roda Istio, CE e data stores.
+
+```bash
+sed 's/"cloud1"/"fog1"/' pr-hcapp.json > pr-hcapp-fog1.json
+curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
+     -d @pr-hcapp-fog1.json http://192.168.0.11/MicroFog/addPR
+fog1$ kubectl -n hcapp get pods -o wide -w
+```
+
+Chame a aplicação como no passo 4, trocando o IP por `192.168.0.11`.
 
 ## O que observar
 
@@ -123,7 +136,7 @@ Para repetir o experimento, apague o namespace da aplicação: `kubectl delete n
 ## Verifique seu entendimento
 
 1. Submeta o mesmo PR com `throughput` = 250. Quantas instâncias de cada microserviço? Ainda cabe no cloud1?
-2. Mude `entryClusters` para `["fog1"]` e submeta **ao fog1** (`cluster: fog1`, IP do fog1). Antes de rodar: o que você espera? *(Esse é o assunto do M6. Apague o `hcapp` antes.)*
+2. Com throughput 100 e entrada no fog1 (passo 6), o hcApp coube todo no fog1? Se não coube, o que aconteceu com o resto? *(Esse é o assunto do M6.)*
 3. Que parte do artigo descreve o que acabou de acontecer entre `PLACEMENT_ALGO_COMPLETED` e `PLACEMENT_COMPLETED`?
 
 ## Problemas comuns
@@ -140,6 +153,6 @@ Para repetir o experimento, apague o namespace da aplicação: `kubectl delete n
 ## Registro de execução
 
 - Data:
-- Previsão × placement real:
+- Previsão × placement real (cloud1 e fog1):
 - Tempo `NEW_PR_RECEIVED` → `PLACEMENT_COMPLETED`:
 - Desvios do plano:

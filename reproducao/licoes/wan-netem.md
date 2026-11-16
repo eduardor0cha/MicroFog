@@ -44,7 +44,7 @@ cloud1$ tc qdisc show dev $IF
 - `delay 50ms 5ms distribution normal`: 50 ms em média, com variação (jitter) de 5 ms.
 - `rate 100mbit`: limite de banda (opcional).
 
-Para dividir o atraso entre ida e volta, aplique metade aqui e metade na **entrada** (é preciso um dispositivo `ifb`). Ou aplique também na saída dos outros PCs, com um filtro só para o destino `192.168.0.13`. Para a Fase B, a forma simples basta.
+Para dividir o atraso entre ida e volta, aplique metade aqui e metade na **entrada** (é preciso um dispositivo `ifb`). Ou aplique também na saída dos outros PCs, com um filtro só para o destino `192.168.0.13`. Para ver funcionando, a forma simples basta.
 
 ### 3. Medir depois
 
@@ -53,7 +53,11 @@ fog1$ ping -c 20 192.168.0.13 | tail -1     # deve subir ~50 ms
 fog1$ ping -c 20 192.168.0.12 | tail -1     # deve ficar igual
 ```
 
-### 4. Remover
+### 4. Refazer o M6 com a WAN
+
+Com a regra ativa, apague o `app2` (`kubectl delete ns app2` nos três clusters) e repita os passos 2–5 do [M6](m6-placement-distribuido.md), com FP1 (`to_rand_fog`) e com FP2 (`to_cloud`). Meça a latência do `curl` do passo 4 em 10 repetições e compare com a do M6 sem WAN. Agora a diferença entre as políticas deve aparecer (Fig. 12).
+
+### 5. Remover
 
 ```bash
 cloud1$ sudo tc qdisc del dev $IF root
@@ -64,7 +68,6 @@ A regra **não sobrevive a um reboot**. Isso é bom num laboratório, porque nã
 ## O que observar
 
 - O tráfego **dentro** do cloud1 (entre os nós KinD, pela bridge Docker) **não** é afetado, só o que sai pelo cabo. Por quê?
-- Refaça o M6 com FP1 e com FP2 e compare a latência do `curl` com a da Fase A.
 
 ## Verifique seu entendimento
 
@@ -76,3 +79,4 @@ A regra **não sobrevive a um reboot**. Isso é bom num laboratório, porque nã
 - Data:
 - Comando `tc` usado:
 - RTT antes e depois (fog1 → cloud1, fog1 → fog2):
+- Latência do `curl` do M6 com a WAN, FP1 × FP2 (10 repetições):

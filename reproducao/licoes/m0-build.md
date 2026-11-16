@@ -34,25 +34,25 @@ Por isso os autores publicaram uma imagem por microserviço (`samodha/dummy-micr
 
 ## Passos
 
-Faça o build numa das VMs (`fog1`). Para não depender da versão de JDK do Ubuntu 26.04 (o projeto compila para Java 11, e a imagem roda em OpenJDK 17), o Maven roda **dentro de um container**.
+Faça o build no PC `carga`, que não roda cluster e não disputa CPU com eles. Para não depender da versão de JDK do Ubuntu 26.04 (o projeto compila para Java 11, e a imagem roda em OpenJDK 17), o Maven roda **dentro de um container**.
 
 ### 1. Token do GHCR
 
 No GitHub: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages`.
 
 ```bash
-fog1$ echo "$CR_PAT" | docker login ghcr.io -u eduardor0cha --password-stdin
+carga$ echo "$CR_PAT" | docker login ghcr.io -u eduardor0cha --password-stdin
 ```
 
 ### 2. Build do CE
 
 ```bash
-fog1$ cd ~/MicroFog/ControlEngine
-fog1$ docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
+carga$ cd ~/MicroFog/ControlEngine
+carga$ docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
         maven:3.9-eclipse-temurin-17 mvn -B package -DskipTests
-fog1$ TAG=src-$(git rev-parse --short HEAD)
-fog1$ docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/eduardor0cha/microfog:$TAG .
-fog1$ docker push ghcr.io/eduardor0cha/microfog:$TAG
+carga$ TAG=src-$(git rev-parse --short HEAD)
+carga$ docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/eduardor0cha/microfog:$TAG .
+carga$ docker push ghcr.io/eduardor0cha/microfog:$TAG
 ```
 
 `-DskipTests` é necessário porque os testes em `src/test` precisam de um cluster e de Redis/MinIO rodando.
@@ -88,7 +88,7 @@ No GitHub: *Your profile → Packages → microfog → Package settings → Chan
 ### 5. Registrar os digests
 
 ```bash
-fog1$ docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/microfog:$TAG
+carga$ docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/microfog:$TAG
 ```
 
 Anote os digests na tabela abaixo.
@@ -119,7 +119,7 @@ Um script `reproducao/scripts/set-images.sh` (a escrever no M3, quando os YAMLs 
 - O `mvn package` termina com `BUILD SUCCESS` e gera `target/quarkus-app/`.
 - As imagens aparecem em `https://github.com/eduardor0cha?tab=packages`.
 
-Se o build falhar por causa de dependências de 2022, **não pare a Fase A**: siga com `IMAGE_SOURCE=upstream` e volte ao build depois (decisão D15).
+Se o build falhar por causa de dependências de 2022, **não pare o plano**: siga com `IMAGE_SOURCE=upstream` e volte ao build depois (decisão D15).
 
 ## Verifique seu entendimento
 

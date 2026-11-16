@@ -43,7 +43,7 @@ cloud.adjacent.cluster[0] = cloud1
 controlengine.loadblancing.policy = weighted_round_robin
 ```
 
-O modo centralizado fica para o [M8](../fase-b-pcs/m8-centralizado.md).
+O modo centralizado fica para o [M8](m8-centralizado.md).
 
 ## Passos
 
@@ -90,7 +90,7 @@ Ajuste a imagem do `controller-<cluster>.yaml` conforme `IMAGE_SOURCE` e troque 
 
 O CE do cloud1 **lê os YAMLs do MinIO e grava os metadados no Redis** ao iniciar (`metadata/MeteDataGenerator.java`). Por isso, ele sobe primeiro, depois do M3 completo.
 
-`todas$` (troque `cloud1` pelo cluster da VM):
+`clusters$` (troque `cloud1` pelo cluster do PC):
 
 ```bash
 cd ~/MicroFog/Prototype_Setup/control-engine-setup
@@ -121,13 +121,13 @@ O gateway do CE (`controller-gateway.yaml`) só aceita o host `control-engine.co
 H='Host: control-engine.control-engine.svc.cluster.local'
 
 # Local: entrar pelo fog1 e falar com o CE do fog1
-curl -s -H "$H" -H "cluster: fog1" http://<IP_FOG1>/MicroFog/home
+curl -s -H "$H" -H "cluster: fog1" http://192.168.0.11/MicroFog/home
 
 # Entre clusters: entrar pelo fog1 e falar com o CE do fog2
-curl -s -H "$H" -H "cluster: fog2" http://<IP_FOG1>/MicroFog/home
+curl -s -H "$H" -H "cluster: fog2" http://192.168.0.11/MicroFog/home
 
 # API 2 no cloud1, chamada a partir do fog1
-curl -s -H "$H" -H "cluster: cloud1" http://<IP_FOG1>/MicroFog/getClusterData | jq
+curl -s -H "$H" -H "cluster: cloud1" http://192.168.0.11/MicroFog/getClusterData | jq
 ```
 
 ### 5. Experimento: o VS original
@@ -136,7 +136,7 @@ Aplique temporariamente o `controller-vs.yaml` **original** e repita a última c
 - Com `IMAGE_SOURCE=local`: espera-se **404**. Confirme no log do sidecar (`kubectl logs <pod> -c istio-proxy`, procure `NR`, "no route").
 - Com `IMAGE_SOURCE=upstream`: se a hipótese do passo 1 estiver certa, a imagem antiga responde em `/getDeviceData`. Teste `curl ... /MicroFog/getDeviceData`.
 
-Volte para o VS do passo 1 e registre o resultado. Ele decide se o VS adaptado precisa ir para a Fase B.
+Volte para o VS do passo 1 e registre o resultado em `decisoes.md` (D21). Se a imagem `upstream` responder aos caminhos antigos, a hipótese se confirma; o VS adaptado continua valendo para as duas origens de imagem.
 
 ## O que observar
 
@@ -146,7 +146,7 @@ Volte para o VS do passo 1 e registre o resultado. Ele decide se o VS adaptado p
 
 ## Verifique seu entendimento
 
-1. Mande `cluster: fog3` (um cluster inexistente). O que o Envoy responde e por quê?
+1. Mande `cluster: fog3` (um cluster que ainda não existe). O que o Envoy responde e por quê?
 2. Nos nós do `getClusterData`, quanto já está **alocado** antes de qualquer aplicação? Quem são esses pods? Que impacto isso tem no espaço livre para o hcApp?
 3. Por que o CE do cloud1 é o único com `populatemetadata = true`? O que aconteceria se os três tivessem `true`?
 4. `controlengine.placementmode.periodic = false` significa event-driven. Que vantagem o modo periódico com processamento em lote (§3.3.1) teria se chegassem 10 PRs ao mesmo tempo?

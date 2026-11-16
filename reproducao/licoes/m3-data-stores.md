@@ -50,7 +50,7 @@ Faça a troca nas cópias dos manifestos, não nos originais. Use o `mc` (client
 
 ### 1. Namespace com injeção do sidecar
 
-`todas$`
+`clusters$`
 
 ```bash
 kubectl create ns control-engine
@@ -128,7 +128,7 @@ cd ~/MicroFog/Prototype_Setup/redis-setup
 cloud1$ kubectl -n control-engine apply -f redis-primary.yaml
 fog1$   kubectl -n control-engine apply -f redis-replica.yaml
 fog2$   kubectl -n control-engine apply -f redis-replica.yaml
-todas$  kubectl -n control-engine apply -f redis-service.yaml -f redis-service-primary.yaml \
+clusters$  kubectl -n control-engine apply -f redis-service.yaml -f redis-service-primary.yaml \
                                          -f redis-vs.yaml -f redis-dr.yaml
 ```
 

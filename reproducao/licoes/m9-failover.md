@@ -6,7 +6,7 @@ Provocar a indisponibilidade dos data stores do fog1, depois também dos do fog2
 
 ## Conceitos
 
-Revise o [M3](../fase-a-vm/m3-data-stores.md#arquitetura-distribuída-41-42-fig-6): os Services `minio` e `redis` têm endpoints nos três clusters, e a DestinationRule com `localityLbSetting` prioriza mesma zona → mesma região (`fog`) → `cloud`. O `outlierDetection` (1 erro 5xx → ejeção) é o que **ativa** o failover: sem ele, o Istio não sabe que a instância local está ruim.
+Revise o [M3](m3-data-stores.md#arquitetura-distribuída-41-42-fig-6): os Services `minio` e `redis` têm endpoints nos três clusters, e a DestinationRule com `localityLbSetting` prioriza mesma zona → mesma região (`fog`) → `cloud`. O `outlierDetection` (1 erro 5xx → ejeção) é o que **ativa** o failover: sem ele, o Istio não sabe que a instância local está ruim.
 
 | Cenário (Fig. 11) | Stores disponíveis | O CE do fog1 deve usar |
 |---|---|---|

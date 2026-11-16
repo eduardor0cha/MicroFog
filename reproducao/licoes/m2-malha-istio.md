@@ -4,7 +4,7 @@
 
 Os três clusters formam **uma única malha de serviços** (Istio *multi-primary, multi-network*). A prova: um pod no fog1 chama `helloworld.sample:5000` e recebe respostas de pods que estão no fog2 e no cloud1.
 
-Esta é a parte mais frágil de toda a reprodução. Faça com calma e tire snapshot antes.
+Esta é a parte mais frágil de toda a reprodução. Faça com calma, com a configuração do M1 já guardada no `carga`.
 
 ## Conceitos
 
@@ -37,7 +37,7 @@ Os arquivos do repositório usados aqui (`Prototype_Setup/cluster-setup/`):
 
 | Arquivo | Função |
 |---|---|
-| `<cluster>/istio-<cluster>.yaml` | `IstioOperator`: nome do cluster, rede, east-west gateway (com `loadBalancerIP` = IP da VM) e ingress gateway |
+| `<cluster>/istio-<cluster>.yaml` | `IstioOperator`: nome do cluster, rede, east-west gateway (com `loadBalancerIP` = IP do PC) e ingress gateway |
 | `istio-cross-gateway.yaml` | Abre a 15443 do east-west para os serviços `*.local` |
 | `apiserver-gateway.yaml` + `apiserver-vs.yaml` | Expõem o API server na porta 6443 do east-west, para os remote secrets |
 
@@ -57,7 +57,7 @@ scp -r ~/certs/fog2   fog2:~/certs-fog2
 scp -r ~/certs/cloud1 cloud1:~/certs-cloud1
 ```
 
-`todas$` Crie o secret `cacerts` **antes** de instalar o Istio. Exemplo no fog1; nas outras VMs, troque o diretório:
+`clusters$` Crie o secret `cacerts` **antes** de instalar o Istio. Exemplo no fog1; nos outros PCs, troque o diretório (`~/certs-fog2`, `~/certs-cloud1`):
 
 ```bash
 kubectl create namespace istio-system
@@ -68,12 +68,12 @@ kubectl -n istio-system create secret generic cacerts \
 
 ### 2. Rede do namespace e instalação
 
-`todas$` (fog1 → `network1`, fog2 → `network2`, cloud1 → `network3`, como nos arquivos do repositório):
+`clusters$` (fog1 → `network1`, fog2 → `network2`, cloud1 → `network3`, como nos arquivos do repositório). Exemplo no fog1; no fog2, use `network2`, `fog2/istio-fog2.yaml` e `192.168.0.12`; no cloud1, `network3`, `cloud1/istio-cloud1.yaml` e `192.168.0.13`:
 
 ```bash
 kubectl label namespace istio-system topology.istio.io/network=network1
 
-sed "s/<PUBLIC_IP_OF_THE_VM>/<IP_FOG1>/" \
+sed "s/<PUBLIC_IP_OF_THE_VM>/192.168.0.11/" \
   ~/MicroFog/Prototype_Setup/cluster-setup/fog1/istio-fog1.yaml > ~/clusters/istio-fog1.yaml
 
 $ISTIO/bin/istioctl install -y -f ~/clusters/istio-fog1.yaml \
@@ -81,17 +81,17 @@ $ISTIO/bin/istioctl install -y -f ~/clusters/istio-fog1.yaml \
   --set components.pilot.k8s.resources.requests.memory=512Mi
 ```
 
-Por que reduzir os *requests* do `istiod`: o padrão (500m / 2 GiB) não cabe nos nós pequenos do M1, e o que o Istio reserva **some do allocatable que o CE enxerga** para as aplicações.
+Por que reduzir os *requests* do `istiod`: o padrão (500m / 2 GiB) pesa nos nós lógicos pequenos do M1 (1,5 vCPU / 3 GB), e o que o Istio reserva **some do allocatable que o CE enxerga** para as aplicações.
 
 ```bash
 kubectl -n istio-system get pods,svc -o wide
 ```
 
-O Service `istio-eastwestgateway` deve ter `EXTERNAL-IP` = IP da VM (vindo do MetalLB).
+O Service `istio-eastwestgateway` deve ter `EXTERNAL-IP` = IP do PC (vindo do MetalLB).
 
 ### 3. Gateways entre clusters
 
-`todas$`
+`clusters$`
 
 ```bash
 cd ~/MicroFog/Prototype_Setup/cluster-setup
@@ -99,15 +99,15 @@ kubectl -n istio-system apply -f istio-cross-gateway.yaml
 kubectl -n istio-system apply -f apiserver-gateway.yaml -f apiserver-vs.yaml
 ```
 
-Teste a partir de **outra** VM: o API server do fog1 deve responder através do gateway, com certificado válido para o IP (M1, passo 2):
+Teste a partir de **outro** PC: o API server do fog1 deve responder através do gateway, com certificado válido para o IP (M1, passo 2):
 
 ```bash
-fog2$ curl -k https://<IP_FOG1>:6443/version
+fog2$ curl -k https://192.168.0.11:6443/version
 ```
 
 ### 4. `meshNetworks`
 
-`todas$` Diga a cada `istiod` onde fica o gateway de cada rede:
+`clusters$` Diga a cada `istiod` onde fica o gateway de cada rede:
 
 ```bash
 kubectl -n istio-system edit configmap istio
@@ -120,30 +120,30 @@ meshNetworks:
   networks:
     network1:
       endpoints: [{fromRegistry: kind-fog1}]
-      gateways: [{address: <IP_FOG1>, port: 15443}]
+      gateways: [{address: 192.168.0.11, port: 15443}]
     network2:
       endpoints: [{fromRegistry: kind-fog2}]
-      gateways: [{address: <IP_FOG2>, port: 15443}]
+      gateways: [{address: 192.168.0.12, port: 15443}]
     network3:
       endpoints: [{fromRegistry: kind-cloud1}]
-      gateways: [{address: <IP_CLOUD1>, port: 15443}]
+      gateways: [{address: 192.168.0.13, port: 15443}]
 ```
 
 `kind-fog1` etc. são os `clusterName` definidos nos arquivos `istio-*.yaml`.
 
 ### 5. Remote secrets
 
-Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada VM **gera** o seu, apontando para o próprio IP, e o envia às outras:
+Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada PC **gera** o seu, apontando para o próprio IP, e o envia às outras:
 
 ```bash
 fog1$ $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog1 \
-        --server=https://<IP_FOG1>:6443 > secret-fog1.yaml
+        --server=https://192.168.0.11:6443 > secret-fog1.yaml
 fog1$ scp secret-fog1.yaml fog2: && scp secret-fog1.yaml cloud1:
 ```
 
 No Istio 1.16, o comando é experimental (`istioctl x create-remote-secret`). Nas versões do fallback, ele virou `istioctl create-remote-secret`.
 
-Repita no fog2 e no cloud1. Depois, em cada VM, aplique os dois secrets recebidos:
+Repita no fog2 e no cloud1. Depois, em cada PC, aplique os dois secrets recebidos:
 
 ```bash
 fog2$ kubectl apply -f secret-fog1.yaml -f secret-cloud1.yaml
@@ -153,7 +153,7 @@ fog2$ kubectl apply -f secret-fog1.yaml -f secret-cloud1.yaml
 
 ### 6. Teste com o helloworld
 
-`todas$`
+`clusters$`
 
 ```bash
 kubectl create ns sample && kubectl label ns sample istio-injection=enabled
@@ -175,13 +175,13 @@ fog1$ for i in $(seq 10); do
       done
 ```
 
-### 7. Snapshot
+### 7. Guardar a configuração
 
-Snapshot `m2` das três VMs.
+Copie `~/clusters` e `~/certs*` de cada PC para o `carga`, como no M1, passo 5. O `~/certs` do fog1 guarda a CA raiz: sem ele, um cluster novo (o fog3, por exemplo) não entra na malha sem refazer os certificados de todos.
 
 ## O que observar
 
-- As respostas alternam entre `v1` (fog1) e `v2`. O nome da instância mostra se a v2 veio do fog2 ou do cloud1: compare com `kubectl -n sample get pods` em cada VM.
+- As respostas alternam entre `v1` (fog1) e `v2`. O nome da instância mostra se a v2 veio do fog2 ou do cloud1: compare com `kubectl -n sample get pods` em cada PC.
 - Veja como o sidecar do sleep enxerga os endpoints:
 
   ```bash
@@ -189,12 +189,12 @@ Snapshot `m2` das três VMs.
           --cluster "outbound|5000||helloworld.sample.svc.cluster.local"
   ```
 
-  O endpoint local aparece com o IP do pod. Os remotos aparecem como `<IP_FOG2>:15443` e `<IP_CLOUD1>:15443`, ou seja, **os gateways**, não os pods.
+  O endpoint local aparece com o IP do pod. Os remotos aparecem como `192.168.0.12:15443` e `192.168.0.13:15443`, ou seja, **os gateways**, não os pods.
 
 ## Verifique seu entendimento
 
 1. Antes de rodar: se você apagar o pod v2 do fog2, o que acontece com as respostas no fog1? Rode e confira.
-2. Pare a VM cloud1. Quanto tempo leva até as respostas pararem de tentar o cloud1? Que recurso do Istio (que o MicroFog usa nos data stores) controlaria isso?
+2. Pare o cluster cloud1 (`cloud1$ docker stop cloud1-control-plane cloud1-worker`; depois, `docker start`). Quanto tempo leva até as respostas pararem de tentar o cloud1? Que recurso do Istio (que o MicroFog usa nos data stores) controlaria isso?
 3. Por que a CA comum é necessária? O que você esperaria ver se o fog2 tivesse uma CA própria?
 4. Na Fig. 7 do artigo, as requisições entre CEs são roteadas pelo cabeçalho `cluster`. Que recurso do Istio, visto aqui, permite isso?
 
@@ -205,7 +205,7 @@ Snapshot `m2` das três VMs.
 | Só responde `v1` | Remote secrets ausentes ou inválidos | `kubectl -n istio-system logs deploy/istiod \| grep -i -E "remote\|cluster"` |
 | `upstream connect error` / reset nas chamadas remotas | CA diferente entre clusters, ou `meshNetworks` com IP errado | `istioctl proxy-config endpoints` e logs do sidecar do sleep |
 | `curl https://<IP>:6443` falha com erro de certificado | SAN do API server sem o IP | M1, passo 2 |
-| `EXTERNAL-IP` do east-west em `<pending>` | O pool do MetalLB não contém o IP da VM | `kubectl -n metallb-system get ipaddresspool -o yaml` |
+| `EXTERNAL-IP` do east-west em `<pending>` | O pool do MetalLB não contém o IP do PC | `kubectl -n metallb-system get ipaddresspool -o yaml` |
 | `istiod` em `Pending` | Requests maiores que o allocatable de algum nó | `kubectl -n istio-system describe pod -l app=istiod` |
 
 ## Registro de execução

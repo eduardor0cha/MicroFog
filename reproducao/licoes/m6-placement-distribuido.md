@@ -48,11 +48,11 @@ Com throughput **200**: quantas instâncias de cada microserviço, e quanto de C
 H='Host: control-engine.control-engine.svc.cluster.local'
 for c in fog1 fog2 cloud1; do
   echo "== $c"
-  curl -s -H "$H" -H "cluster: $c" http://<IP_FOG1>/MicroFog/getClusterData | jq '.'   # filtre os campos de CPU livre
+  curl -s -H "$H" -H "cluster: $c" http://192.168.0.11/MicroFog/getClusterData | jq '.'   # filtre os campos de CPU livre
 done
 ```
 
-Escreva: o que fica no fog1, o que vai para o fog2 e o que (se algo) vai para o cloud1.
+Escreva: o que fica no fog1, o que vai para o fog2 e o que (se algo) vai para o cloud1. Se pela sua conta tudo couber no fog1, aumente o throughput (300, 400...) até forçar o forwarding, e registre o valor usado.
 
 ### 2. Submeter ao fog1
 
@@ -64,7 +64,7 @@ cat > pr-app2.json <<'EOF'
  "restrictions":[],"traversedClusters":[]}
 EOF
 curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
-     -d @pr-app2.json http://<IP_FOG1>/MicroFog/addPR
+     -d @pr-app2.json http://192.168.0.11/MicroFog/addPR
 ```
 
 ### 3. Seguir o PR pelos três clusters
@@ -80,15 +80,15 @@ cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
 Procure `REQUEST_FORWARD` no fog1 e `NEW_PR_RECEIVED` logo depois no fog2. Os timestamps em milissegundos permitem medir quanto tempo o forwarding levou.
 
 ```bash
-todas$ kubectl -n app2 get pods -o wide
-todas$ kubectl -n app2 get svc,vs,dr
+clusters$ kubectl -n app2 get pods -o wide
+clusters$ kubectl -n app2 get svc,vs,dr
 ```
 
 ### 4. Chamar a aplicação
 
 ```bash
 curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
-     -X GET http://<IP_FOG1>/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+     -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
 ```
 
 A requisição entra no fog1, e cada chamada para um microserviço que está em outro cluster passa pelo east-west gateway do M2.
@@ -106,7 +106,7 @@ Apague o `app2` em todos os clusters (`kubectl delete ns app2`). Mude o fog1 par
 ## Verifique seu entendimento
 
 1. Por que o Service `a2m2` precisa existir num cluster que não tem nenhum pod a2m2?
-2. Com FP2 (`to_cloud`), a latência do `curl` do passo 4 aumentou ou diminuiu em relação ao FP1? Isso bate com a Fig. 12? Com que ressalva (na Fase A não há WAN emulada)?
+2. Com FP2 (`to_cloud`), a latência do `curl` do passo 4 aumentou ou diminuiu em relação ao FP1? Isso bate com a Fig. 12? Com que ressalva (este marco roda sem WAN emulada; a lição da [WAN](wan-netem.md) refaz a comparação)?
 3. Mude o fog1 para `controlengine.placementalgo.version = V1` e repita com FP1. Compare com a Tabela 3: o placement vai mais para a cloud?
 4. O que acontece se **nenhum** cluster tiver recursos? Leia `selectRandomCluster` com uma lista vazia.
 

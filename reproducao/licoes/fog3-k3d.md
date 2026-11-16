@@ -31,7 +31,7 @@ Use uma imagem `rancher/k3s` com a **mesma versão de Kubernetes** dos outros cl
 
 ### 2. Criar o cluster
 
-`fog3$` (os `system-reserved` seguem a proposta × 0,5 de [m1-m7-nos-pcs.md](m1-m7-nos-pcs.md); recalcule para o seu PC):
+`fog3$` (os `system-reserved` seguem a proposta × 0,5 do [M1](m1-clusters.md#tamanhos-lógicos-dos-nós-questão-em-aberto-a2): server 1,5 vCPU / 3 Gi, agents 1 vCPU / 2 Gi. Os valores abaixo supõem `MemTotal` = 15 360 Mi no PC4; recalcule com o valor real, pela mesma fórmula):
 
 ```bash
 k3d cluster create fog3 \
@@ -40,9 +40,9 @@ k3d cluster create fog3 \
   --k3s-arg "--disable=traefik@server:0" \
   --k3s-arg "--disable=servicelb@server:0" \
   --k3s-arg "--tls-san=192.168.0.14@server:0" \
-  --k3s-arg "--kubelet-arg=system-reserved=cpu=2.5,memory=20Gi@server:0" \
-  --k3s-arg "--kubelet-arg=system-reserved=cpu=3,memory=21Gi@agent:0" \
-  --k3s-arg "--kubelet-arg=system-reserved=cpu=3,memory=21Gi@agent:1" \
+  --k3s-arg "--kubelet-arg=system-reserved=cpu=2.5,memory=12188Mi@server:0" \
+  --k3s-arg "--kubelet-arg=system-reserved=cpu=3,memory=13212Mi@agent:0" \
+  --k3s-arg "--kubelet-arg=system-reserved=cpu=3,memory=13212Mi@agent:1" \
   -p "15443:32012@agent:0" -p "80:32022@agent:0" -p "6443:32032@agent:0" \
   --k3s-node-label "topology.kubernetes.io/region=fog@server:0;agent:*" \
   --k3s-node-label "topology.kubernetes.io/zone=fog3@server:0;agent:*" \
@@ -61,11 +61,11 @@ kubectl get nodes -o custom-columns=NOME:.metadata.name,CPU:.status.allocatable.
 
 ### 3. metrics-server e MetalLB
 
-O k3s já traz o metrics-server. O MetalLB é instalado como no M1, passo 4, com um pool `fog3-pool` contendo `192.168.0.14/32` e uma faixa da rede Docker do k3d (veja com `docker network inspect k3d-fog3`).
+O k3s já traz o metrics-server. O MetalLB é instalado como no M1, passo 4, com um pool `fog3-pool` contendo `192.168.0.14/32` e uma faixa da rede Docker do k3d (veja com `docker network inspect k3d-fog3`; com as faixas do Docker do [00](00-preparar-pcs-e-rede.md), passo 6, ela fica em `10.200.x.0/24`).
 
 ### 4. Istio
 
-- CA: gere `fog3-cacerts` com a mesma CA raiz do M2 (passo 1), **no PC onde está a CA raiz**.
+- CA: gere `fog3-cacerts` com a mesma CA raiz do M2 (passo 1), **no fog1**, onde está a CA raiz (`~/certs`, M2, passo 1), e copie para o fog3 com `scp`.
 - `istio-fog3.yaml`: copie `Prototype_Setup/cluster-setup/fog1/istio-fog1.yaml`, troque `clusterName: k3d-fog3`, `network: network4` (todas as ocorrências) e `loadBalancerIP: 192.168.0.14`.
 - `kubectl label namespace istio-system topology.istio.io/network=network4`
 - Aplique `istio-cross-gateway.yaml`, `apiserver-gateway.yaml` e `apiserver-vs.yaml`.

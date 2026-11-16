@@ -4,7 +4,7 @@
 
 Confirmar que o tráfego de um microserviço com várias instâncias espalhadas entre clusters se divide **na proporção dos recursos alocados** a cada instância, como mostram as Fig. 15–16 do artigo. A verificação é feita de dois jeitos: visualmente no **Kiali** e contando as requisições por instância.
 
-Este é o último marco da Fase A.
+Com este marco, cada mecanismo central do MicroFog terá rodado pelo menos uma vez. As lições seguintes completam a arquitetura do artigo.
 
 ## Conceitos
 
@@ -25,7 +25,7 @@ Exemplo do artigo (Tabela 3): a2m2 com três instâncias em `fog1-worker3`, `fog
 
 ### 1. Instalar os addons
 
-`todas$` (os addons vêm na distribuição do Istio):
+`clusters$` (os addons vêm na distribuição do Istio):
 
 ```bash
 kubectl apply -f $ISTIO/samples/addons/prometheus.yaml
@@ -33,11 +33,11 @@ kubectl apply -f $ISTIO/samples/addons/kiali.yaml
 kubectl -n istio-system rollout status deploy/kiali
 ```
 
-Para abrir no navegador do Windows (o repositório também traz `kiali-setup/*.yaml` para expor pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações):
+Para abrir no navegador de qualquer máquina do laboratório, por exemplo o `carga` (o repositório também traz `kiali-setup/*.yaml` para expor pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações):
 
 ```bash
 fog1$ kubectl -n istio-system port-forward --address 0.0.0.0 svc/kiali 20001:20001
-# no navegador: http://<IP_FOG1>:20001
+# no navegador: http://192.168.0.11:20001
 ```
 
 Esta é uma instalação de Kiali **por cluster**: cada um mostra o tráfego visto pelos seus sidecars. A visão unificada multi-cluster (<https://kiali.io/docs/features/multi-cluster/>) fica como extensão.
@@ -47,18 +47,20 @@ Esta é uma instalação de Kiali **por cluster**: cada um mostra o tráfego vis
 Com o app2 do M6 implantado:
 
 ```bash
-todas$ kubectl -n app2 get dr,vs -o yaml | grep -E -A3 "subsets:|weight:"
+clusters$ kubectl -n app2 get dr,vs -o yaml | grep -E -A3 "subsets:|weight:"
 ```
 
 Anote os pesos esperados por instância/cluster.
 
 ### 3. Gerar carga
 
+A carga sai do PC `carga`, para não roubar CPU dos clusters medidos.
+
 ```bash
-hey -n 600 -c 4 -m GET \
+carga$ hey -n 600 -c 4 -m GET \
     -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
     -d '{"message":[65,68,67],"dataProcessingTime":30}' \
-    http://<IP_FOG1>/DummyM/getResults
+    http://192.168.0.11/DummyM/getResults
 ```
 
 ### 4. Contar as requisições por instância
@@ -66,7 +68,7 @@ hey -n 600 -c 4 -m GET \
 Cada microserviço de teste registra `Request received for processing` a cada requisição. Em cada cluster que tem instâncias do a2m2:
 
 ```bash
-todas$ for p in $(kubectl -n app2 get pods -o name | grep a2m2); do
+clusters$ for p in $(kubectl -n app2 get pods -o name | grep a2m2); do
          # sem -c: a injeção do Istio marca o container da aplicação como padrão
          echo "$p $(kubectl -n app2 logs $p --since=10m | grep -c 'Request received for processing')"
        done
@@ -78,9 +80,9 @@ Compare as contagens com os pesos do passo 2.
 
 *Graph → Namespace app2 → Versioned app graph*, com *Display → Traffic distribution* ligado. Faça uma captura de tela parecida com a Fig. 15.
 
-### 6. Snapshot final
+### 6. Guardar a configuração
 
-Snapshot `fase-a-concluida` das três VMs.
+Copie `~/clusters`, `~/ce` e `~/certs*` de cada PC para o `carga`, como no M1, passo 5.
 
 ## O que observar
 
@@ -106,4 +108,4 @@ Snapshot `fase-a-concluida` das três VMs.
 - Data:
 - Pesos gerados × contagens observadas:
 - Captura do Kiali (caminho do arquivo):
-- **Fase A concluída?** Sim / Não. O que falta:
+- M0–M7 concluídos? Sim / Não. O que falta:

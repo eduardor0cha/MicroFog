@@ -2,7 +2,9 @@
 
 ## Objetivo
 
-Um cluster KinD em cada VM (`fog1`, `fog2`, `cloud1`), com nós rotulados por região e zona, *metrics-server* e MetalLB, e com o certificado do API server aceitando o IP da VM.
+Um cluster KinD em cada PC de cluster (`fog1`, `fog2`, `cloud1`), com a **topologia de nós da Tabela 2** (fog1: 4 nós, fog2: 5, cloud1: 2), nós rotulados por região e zona, *metrics-server* e MetalLB, e com o certificado do API server aceitando o IP do PC.
+
+O fog3 (k3d) entra depois, em [fog3-k3d.md](fog3-k3d.md). Até o M7, a malha tem três clusters.
 
 ## Conceitos
 
@@ -68,28 +70,66 @@ kind delete cluster --name gate
 - **GO**: o nó fica `Ready`, CoreDNS e istiod em `Running`. Use as versões de 2022 em tudo.
 - **NO-GO**: algum desses passos falha. Registre o erro exato no Registro de execução, troque para o fallback e anote as versões em `decisoes.md` (D13).
 
-Instale a mesma versão de `kind` e `istioctl` nas três VMs.
+Instale a mesma versão de `kind` e `istioctl` nos PCs 1–5.
+
+## Tamanhos lógicos dos nós (questão em aberto A2)
+
+Restrições:
+- **Nenhum nó pode ter allocatable maior que o PC** (4 núcleos). A Tabela 2 tem nós de 5 e de 8 vCPU.
+- A **memória** somada dos nós de um cluster deve caber na memória real do PC, porque memória não se compartilha como CPU: um *overcommit* termina em OOM.
+
+**Proposta inicial: Tabela 2 × 0,5, em CPU e em memória.**
+
+| Cluster | Nó (Tabela 2) | Tabela 2 | Alvo (× 0,5) |
+|---|---|---|---|
+| fog1 | control-plane / worker / worker2 / worker3 | 3/6, 4/9, 5/16, 3/8 | 1,5/3, 2/4,5, 2,5/8, 1,5/4 |
+| fog2 | control-plane / worker / worker2 / worker3 / worker4 | 3/6, 3/9, 2/6, 4/12, 4/8 | 1,5/3, 1,5/4,5, 1/3, 2/6, 2/4 |
+| fog3 | server / agent-0 / agent-1 | 3/6, 2/4, 2/4 | 1,5/3, 1/2, 1/2 |
+| cloud1 | control-plane / worker | 8/14, 8/14 | 4/7, 4/7 |
+
+(valores em vCPU / GB)
+
+- Cada nó cabe no PC (≤ 4 núcleos), e a memória somada cabe nos PCs (fog1: 19,5; fog2: 20,5; cloud1: 14 de 24 GB; fog3: 7 de 16 GB).
+- A CPU somada passa do real (fog1: 7,5 lógicos em 4 núcleos). Isso é *overcommit* de contabilidade, aceitável para "ver funcionando", mas que **distorce latências** quando a carga é alta.
+- Os requisitos das aplicações (hcm2 = 1 CPU etc.) **não** foram reduzidos. A relação aplicação/infraestrutura é o dobro da do artigo, e o placement vai diferir da Tabela 3. Para a replicação fiel, considere também multiplicar por 0,5 os requisitos em `metadata/*.java` (é preciso recompilar o CE, M0).
+
+### Do alvo ao `system-reserved`
+
+O nó KinD enxerga a capacidade do PC inteiro, que você lê no próprio host:
+
+```bash
+fog1$ nproc                                                     # 4
+fog1$ awk '/MemTotal/ {printf "%d Mi\n", $2/1024}' /proc/meminfo
+```
+
+```
+system-reserved cpu    = 4 − alvo de CPU
+system-reserved memory = MemTotal (Mi) − alvo de memória (Mi) − 100 Mi
+```
+
+A tabela abaixo supõe `MemTotal` = 23 552 Mi (23 GiB) nos PCs 1–3. Se o seu valor for outro, some a diferença a cada valor de memória.
+
+| Cluster | Nó | Alvo | system-reserved | Papel |
+|---|---|---|---|---|
+| fog1 | control-plane | 1,5 / 3 Gi | `cpu=2.5,memory=20380Mi` | |
+| fog1 | worker | 2 / 4,5 Gi | `cpu=2,memory=18844Mi` | gateways do Istio (portas mapeadas) |
+| fog1 | worker2 | 2,5 / 8 Gi | `cpu=1.5,memory=15260Mi` | |
+| fog1 | worker3 | 1,5 / 4 Gi | `cpu=2.5,memory=19356Mi` | |
+| fog2 | control-plane | 1,5 / 3 Gi | `cpu=2.5,memory=20380Mi` | |
+| fog2 | worker | 1,5 / 4,5 Gi | `cpu=2.5,memory=18844Mi` | gateways do Istio |
+| fog2 | worker2 | 1 / 3 Gi | `cpu=3,memory=20380Mi` | |
+| fog2 | worker3 | 2 / 6 Gi | `cpu=2,memory=17308Mi` | |
+| fog2 | worker4 | 2 / 4 Gi | `cpu=2,memory=19356Mi` | |
+| cloud1 | control-plane | 4 / 7 Gi | `cpu=0,memory=16284Mi` | |
+| cloud1 | worker | 4 / 7 Gi | `cpu=0,memory=16284Mi` | gateways do Istio |
+
+Registre os valores finais em `decisoes.md` (A2) e no Registro de execução.
 
 ## Passos
 
-### 1. Configuração reduzida dos clusters
+### 1. Configuração dos clusters
 
-Decisão D10: fog1 e fog2 com 1 control-plane + 2 workers; cloud1 com 1 control-plane + 1 worker. VMs de 4 vCPU / 8 GB. Valores iniciais de `system-reserved`:
-
-| Cluster | Nó | system-reserved | allocatable aproximado | Papel |
-|---|---|---|---|---|
-| fog1 | control-plane | `cpu=3,memory=6Gi` | 1 vCPU / 1,9 GB | |
-| fog1 | worker | `cpu=2,memory=5Gi` | 2 vCPU / 2,9 GB | gateways do Istio (portas mapeadas) |
-| fog1 | worker2 | `cpu=3,memory=6Gi` | 1 vCPU / 1,9 GB | |
-| fog2 | control-plane | `cpu=3,memory=6Gi` | 1 vCPU / 1,9 GB | |
-| fog2 | worker | `cpu=2,memory=5Gi` | 2 vCPU / 2,9 GB | gateways do Istio |
-| fog2 | worker2 | `cpu=2.5,memory=5.5Gi` | 1,5 vCPU / 2,4 GB | |
-| cloud1 | control-plane | `cpu=2,memory=4Gi` | 2 vCPU / 3,9 GB | |
-| cloud1 | worker | `cpu=1,memory=4Gi` | 3 vCPU / 3,9 GB | gateways do Istio |
-
-Os fogs são **pequenos de propósito**: no M6, um PR com throughput maior não pode caber no fog1, para forçar o forwarding. Se o Istio ou o CE não couberem, ajuste estes números e registre.
-
-`fog1$` Crie `~/clusters/kind-fog1.yaml` a partir do original, mantendo a estrutura e mudando só a quantidade de nós e as reservas:
+`fog1$` Crie `~/clusters/kind-fog1.yaml` a partir do original, mantendo a estrutura e mudando as reservas:
 
 ```yaml
 kind: Cluster
@@ -103,7 +143,7 @@ nodes:
       kind: InitConfiguration
       nodeRegistration:
         kubeletExtraArgs:
-          system-reserved: memory=6Gi,cpu=3
+          system-reserved: memory=20380Mi,cpu=2.5
     labels:
       topology.kubernetes.io/region: fog
       topology.kubernetes.io/zone: fog1
@@ -114,8 +154,8 @@ nodes:
       kind: JoinConfiguration
       nodeRegistration:
         kubeletExtraArgs:
-          system-reserved: memory=5Gi,cpu=2
-    extraPortMappings:          # porta do host → nodePort dos gateways do Istio (M2)
+          system-reserved: memory=18844Mi,cpu=2
+    extraPortMappings:          # porta do PC → nodePort dos gateways do Istio (M2)
       - containerPort: 32012    # east-west gateway (tráfego entre clusters)
         hostPort: 15443
       - containerPort: 32022    # ingress gateway (usuários, PRs)
@@ -134,7 +174,18 @@ nodes:
       kind: JoinConfiguration
       nodeRegistration:
         kubeletExtraArgs:
-          system-reserved: memory=6Gi,cpu=3
+          system-reserved: memory=15260Mi,cpu=1.5
+    labels:
+      topology.kubernetes.io/region: fog
+      topology.kubernetes.io/zone: fog1
+  - role: worker
+    image: kindest/node:v1.24.0@sha256:0866296e693efe1fed79d5e6c7af8df71fc73ae45e3679af05342239cdc5bc8e
+    kubeadmConfigPatches:
+    - |
+      kind: JoinConfiguration
+      nodeRegistration:
+        kubeletExtraArgs:
+          system-reserved: memory=19356Mi,cpu=2.5
     labels:
       topology.kubernetes.io/region: fog
       topology.kubernetes.io/zone: fog1
@@ -154,7 +205,7 @@ kubeadmConfigPatches:
       enable-aggregator-routing: "true"
 ```
 
-Repita no `fog2` (com `zone: fog2`) e no `cloud1` (com `region: cloud`, `zone: cloud1`), usando os valores da tabela.
+Faça o mesmo no `fog2` (5 nós, `zone: fog2`) e no `cloud1` (2 nós, `region: cloud`, `zone: cloud1`), com os valores da tabela. Em ambos, as portas e os rótulos `istioingress`/`istioeastwest` ficam no **primeiro worker**.
 
 Diferenças em relação ao original e por quê:
 - Removemos os `extraMounts` (`./data_*`): não são usados pelo CE e exigiriam diretórios no host.
@@ -165,15 +216,23 @@ fog1$ kind create cluster --config ~/clusters/kind-fog1.yaml
 fog1$ kubectl get nodes -L topology.kubernetes.io/region,topology.kubernetes.io/zone
 ```
 
-### 2. Certificado do API server com o IP da VM
+O KinD usa a rede Docker `kind` criada no [00](00-preparar-pcs-e-rede.md), passo 6 (`10.201.0.0/16`).
 
-No M2, os outros clusters vão acessar o API server deste cluster em `https://<IP_FOG1>:6443`, passando pelo gateway do Istio. O certificado do API server precisa incluir esse IP, ou a conexão TLS é recusada.
+### 2. Certificado do API server com o IP do PC
 
-`fog1$` (em cada VM, só para o próprio cluster):
+No M2, os outros clusters vão acessar o API server deste cluster em `https://192.168.0.11:6443`, passando pelo gateway do Istio. O certificado do API server precisa incluir esse IP, ou a conexão TLS é recusada.
+
+`clusters$` (em cada PC, só para o próprio cluster):
+
+| PC | `CP` | `IP` |
+|---|---|---|
+| fog1 | `fog1-control-plane` | `192.168.0.11` |
+| fog2 | `fog2-control-plane` | `192.168.0.12` |
+| cloud1 | `cloud1-control-plane` | `192.168.0.13` |
 
 ```bash
-CP=fog1-control-plane          # fog2-control-plane / cloud1-control-plane
-IP=<IP_FOG1>
+CP=fog1-control-plane
+IP=192.168.0.11
 
 kubectl -n kube-system get configmap kubeadm-config \
   -o jsonpath='{.data.ClusterConfiguration}' > kubeadm.yaml
@@ -211,15 +270,19 @@ kubectl top nodes       # aguarde ~1 min
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.7/config/manifests/metallb-native.yaml
 kubectl -n metallb-system wait --for=condition=Ready pod --all --timeout=180s
-sed "s/<PUBLIC_IP_OF_THE_VM>/<IP_FOG1>/" \
+sed -e "s/<PUBLIC_IP_OF_THE_VM>/192.168.0.11/" -e "s/172\.18\.255\./10.201.255./g" \
   ~/MicroFog/Prototype_Setup/cluster-setup/fog1/ip_pool_fog1.yaml | kubectl apply -f -
 ```
 
-O pool tem duas partes: a faixa `172.18.255.x`, dentro da rede Docker `kind`, e o IP da VM (`/32`). O IP da VM vai para o east-west gateway (M2), e é ele que os outros clusters usam.
+O pool tem duas partes: uma faixa dentro da rede Docker `kind` (no original, `172.18.255.x`; aqui, `10.201.255.x`, porque mudamos a rede no 00) e o IP do PC (`/32`). O IP do PC vai para o east-west gateway (M2), e é ele que os outros clusters usam.
 
-### 5. Snapshot
+### 5. Guardar a configuração
 
-Tire um snapshot `m1` das três VMs.
+`carga$` copie os arquivos de cada PC (ponto de retorno; veja o [README](../README.md#pontos-de-retorno)):
+
+```bash
+for h in fog1 fog2 cloud1; do mkdir -p ~/backup/$h && scp -r $h:clusters ~/backup/$h/; done
+```
 
 ## O que observar
 
@@ -227,28 +290,37 @@ Tire um snapshot `m1` das três VMs.
 kubectl get nodes -o custom-columns=NOME:.metadata.name,CPU:.status.allocatable.cpu,MEM:.status.allocatable.memory
 ```
 
-Compare o allocatable de cada nó com a tabela do passo 1. É exatamente isso que o CE vai "ver".
+Compare o allocatable de cada nó com o alvo da tabela. É exatamente isso que o CE vai "ver".
+
+Disco: os PCs usam HDD, e o etcd grava em disco (`fsync`) a cada escrita. Confira se ele reclama (questão em aberto A5):
+
+```bash
+kubectl -n kube-system logs etcd-fog1-control-plane | grep -c "slow fdatasync"
+```
 
 ## Verifique seu entendimento
 
-1. Rode `docker ps` na VM. Quantos containers você vê? Qual a relação com `kubectl get nodes`?
-2. `kubectl top nodes` mostra o mesmo uso de CPU para todos os nós, ou um diferente para cada? Por quê, se todos compartilham a mesma VM?
+1. Rode `docker ps` no PC. Quantos containers você vê? Qual a relação com `kubectl get nodes`?
+2. `kubectl top nodes` mostra o mesmo uso de CPU para todos os nós, ou um diferente para cada? Por quê, se todos compartilham o mesmo PC?
 3. Mude o `system-reserved` de um worker, recrie o cluster e confira o novo allocatable. Que impacto isso teria num placement do V1 (sem escalonamento horizontal)?
-4. Por que os três clusters podem usar a mesma porta 15443 do host sem conflito? Isso funcionaria se estivessem numa VM só?
+4. Por que os três clusters podem usar a mesma porta 15443 do host sem conflito? Isso funcionaria se estivessem num PC só?
+5. Que experimento do artigo seria mais distorcido pelo *overcommit* de CPU: o da Fig. 11 (latência dos stores) ou o da Fig. 13 (tempo de placement)? Por quê?
 
 ## Problemas comuns
 
 | Sintoma | Causa provável | Diagnóstico |
 |---|---|---|
 | `kind create` trava em "Starting control-plane" | Imagem antiga do nó incompatível com o kernel/cgroup do host | `docker logs fog1-control-plane`; é o caso NO-GO do portão |
-| Pods em `CrashLoopBackOff` com "too many open files" | Limites de inotify | Passo 5 do [00](00-preparar-vms.md) |
+| Pods em `CrashLoopBackOff` com "too many open files" | Limites de inotify | [00](00-preparar-pcs-e-rede.md), passo 7 |
 | `kubectl top` → "metrics not available" | Falta `--kubelet-insecure-tls` ou ainda não houve coleta | `kubectl -n kube-system logs deploy/metrics-server` |
-| Nó `NotReady` por falta de memória | `system-reserved` somado maior que a VM | `kubectl describe node` |
+| Nó `NotReady` ou allocatable negativo | `system-reserved` maior que a capacidade do PC | `kubectl describe node`; refaça a conta com o `MemTotal` real |
+| API server lento, `kubectl` com timeouts | etcd em HDD (`slow fdatasync`) | Logs do etcd; questão A5 em `decisoes.md` |
 
 ## Registro de execução
 
 - Data:
 - Resultado do portão: GO / NO-GO (erro):
 - Versões usadas (kind, imagem do nó, Istio, MetalLB, metrics-server):
-- `system-reserved` finais:
+- `MemTotal` de cada PC e `system-reserved` finais por nó:
+- Avisos `slow fdatasync` do etcd (quantidade em ~10 min):
 - Desvios do plano:
