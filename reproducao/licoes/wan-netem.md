@@ -44,6 +44,8 @@ cloud1$ tc qdisc show dev $IF
 - `delay 50ms 5ms distribution normal`: 50 ms em média, com variação (jitter) de 5 ms.
 - `rate 100mbit`: limite de banda (opcional).
 
+A internet do cloud1 também sai pelo cabo, então a regra atrasa os downloads dele. Faça os pulls de imagens antes de aplicá-la.
+
 Para dividir o atraso entre ida e volta, aplique metade aqui e metade na **entrada** (é preciso um dispositivo `ifb`). Ou aplique também na saída dos outros PCs, com um filtro só para o destino `192.168.0.13`. Para ver funcionando, a forma simples basta.
 
 ### 3. Medir depois

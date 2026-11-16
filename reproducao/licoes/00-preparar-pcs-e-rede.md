@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Seis PCs com Ubuntu Server 26.04.1, cada um com um papel definido. Todos falam entre si pelo **switch** (cabo, IP fixo por reserva DHCP no roteador do switch), acessam a internet pela **Wi-Fi**, têm os relógios sincronizados e já trazem Docker e as ferramentas de linha de comando que as próximas lições usam.
+Seis PCs com Ubuntu Server 26.04.1, cada um com um papel definido. Todos falam entre si pelo **switch** (cabo, IP fixo por reserva DHCP no roteador do switch), acessam a internet pelo **roteador do switch** (com a **Wi-Fi** como redundância), têm os relógios sincronizados e já trazem Docker e as ferramentas de linha de comando que as próximas lições usam.
 
 ## Conceitos
 
@@ -48,17 +48,18 @@ Os guias originais falam em `<PUBLIC_IP_OF_THE_VM>`: é o endereço pelo qual **
 ### Duas interfaces (decisão D19)
 
 ```
-   roteador ── switch (192.168.0.0/24, reserva DHCP por MAC)
+   internet ── roteador ── switch (192.168.0.0/24, reserva DHCP por MAC; rota padrão)
    ┌──────┬──────┬──────┬──────┬──────┬──────┐
   fog1   fog2  cloud1  fog3  carga  reserva      ← tráfego MicroFog: 80, 6443, 15443, PRs
   (.11)  (.12)  (.13)  (.14)  (.15)  (.16)
    │      │      │      │      │      │
-   └──────┴──────┴──────┴──────┴──────┴──── Wi-Fi WPA2 → internet (rota padrão)
+   └──────┴──────┴──────┴──────┴──────┴──── Wi-Fi WPA2 → internet (redundância)
 ```
 
 - O **IP do cabo** é o "IP público da VM" dos guias.
-- A **Wi-Fi** só serve para `apt`, pull de imagens e GHCR. Ela **não pode** ser a rota entre os PCs.
-- O **roteador do switch** também dá internet, mas os PCs ignoram o gateway e o DNS que ele anuncia: a rota padrão fica na Wi-Fi. Assim, downloads grandes não disputam o cabo com o tráfego que será medido. Se a Wi-Fi do laboratório falhar, dá para usar o roteador como plano B: basta tirar o `dhcp4-overrides` do passo 2.
+- O **roteador do switch** é a fonte principal: dá o IP fixo, a rota padrão e o DNS. O tráfego MicroFog e a internet (`apt`, pull de imagens, GHCR) saem pelo cabo.
+- A **Wi-Fi** é só redundância: tem rota padrão com métrica maior, usada se o cabo cair. Ela **não pode** ser a rota entre os PCs.
+- Como os downloads passam pelo mesmo cabo que o tráfego medido, faça os pulls de imagens **antes** de cada medição, nunca durante.
 
 ## Passos
 
@@ -66,7 +67,7 @@ Os guias originais falam em `<PUBLIC_IP_OF_THE_VM>`: é o endereço pelo qual **
 
 Ubuntu Server 26.04.1 marcando **OpenSSH server**. **Não** instale o Docker pelo instalador (que usa snap): vamos usar o pacote apt (passo 6).
 
-**Configure a Wi-Fi já no instalador**: o Ubuntu Server precisa do `wpasupplicant` para Wi-Fi, e sem rede não dá para instalá-lo depois. Se o instalador não detectar a placa Wi-Fi, use o cabo: o roteador do switch também dá internet.
+Instale com o cabo conectado: o roteador do switch dá internet. A Wi-Fi é configurada no passo 2. Se faltar o `wpasupplicant`, que o Ubuntu Server usa para Wi-Fi, instale-o pelo cabo (`sudo apt install wpasupplicant`).
 
 Na BIOS: desative suspensão e hibernação, e ative "power on after AC loss" se existir.
 
@@ -83,11 +84,12 @@ network:
     eno1:
       dhcp4: true
       dhcp4-overrides:
-        use-routes: false     # ignora o gateway do roteador: a rota padrão fica na Wi-Fi
-        use-dns: false
+        route-metric: 100     # rota padrão principal: roteador do switch
   wifis:
     wlp2s0:
       dhcp4: true
+      dhcp4-overrides:
+        route-metric: 600     # redundância: só é usada se a rota do cabo sumir
       access-points:
         "NOME_DA_REDE":
           password: "SENHA"
@@ -96,9 +98,17 @@ network:
 ```bash
 sudo netplan apply
 ip -4 addr show eno1      # deve mostrar o IP reservado (ex.: 192.168.0.11 no PC1)
-ip route                  # a única rota "default" deve sair pela Wi-Fi
+ip route                  # duas rotas "default": eno1 com metric 100 e Wi-Fi com metric 600
+ip route get 1.1.1.1      # deve sair pelo eno1
 ping -c2 192.168.0.12      # deve sair pelo eno1
 ip route get 192.168.0.12
+```
+
+A troca para a Wi-Fi só é automática quando a rota do cabo some, por exemplo com o cabo desconectado. Se o roteador perder a internet mas o link continuar ativo, a rota pelo cabo continua lá, e a troca é manual:
+
+```bash
+sudo ip route del default dev eno1    # a internet passa a sair pela Wi-Fi; o tráfego entre PCs continua no cabo
+sudo netplan apply                    # volta ao normal quando o roteador se recuperar
 ```
 
 ### 3. Conferir conflitos de faixa de IP
@@ -225,17 +235,18 @@ git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
 
 ## O que observar
 
-- `ip route get 192.168.0.13` sai pelo cabo; `ip route get 1.1.1.1` sai pela Wi-Fi.
+- `ip route get 192.168.0.13` e `ip route get 1.1.1.1` saem pelo cabo (`eno1`).
+- Com `sudo ip route del default dev eno1`, `ip route get 1.1.1.1` passa a sair pela Wi-Fi, e o `ping` entre os PCs continua funcionando. `sudo netplan apply` restaura.
 - `hostname` mostra `pc-lamp-<n>`, e `ping fog1` e `ping pc-lamp-1` respondem do mesmo IP.
 - `ssh fog1`, `ssh fog2`, `ssh cloud1` e `ssh fog3` funcionam a partir do `carga` sem senha.
-- Desligar a Wi-Fi não afeta `ping` entre os PCs.
+- Desligar a Wi-Fi não afeta nada: nem o `ping` entre os PCs, nem a internet.
 - `chronyc sources` mostra o `carga` (`192.168.0.15`) como fonte, marcado com `*`, nos outros cinco PCs.
 - `docker info` mostra `Cgroup Version: 2`, e `docker network inspect kind` mostra a sub-rede `10.201.0.0/16`.
 
 ## Verifique seu entendimento
 
 1. A Tabela 2 do artigo mostra o fog1 com 4 nós (3+4+5+3 = 15 vCPU) rodando numa VM de 16 vCPU. Se os 4 "nós" são containers no mesmo host, cada um deles enxerga quantas CPUs? *(Resposta no M1.)*
-2. O roteador do switch também tem internet. O que mudaria nas medições se a rota padrão saísse pelo cabo?
+2. Os downloads passam pelo mesmo cabo que o tráfego entre clusters. Que medição seria distorcida por um `docker pull` no meio de um experimento, e como evitar?
 3. Por que não usar a Wi-Fi para o tráfego entre clusters, já que ela também conecta todos os PCs?
 4. O que quebraria se o roteador mudasse o IP do cabo de um PC depois do M2?
 5. Por que o servidor NTP é o `carga`, e não um dos PCs de cluster?
@@ -245,8 +256,8 @@ git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
 
 | Sintoma | Causa provável | Diagnóstico |
 |---|---|---|
-| Sem internet depois do `netplan apply` | Wi-Fi não conectou | `ip route`; deve haver uma rota `default` pela Wi-Fi |
-| Duas rotas `default` | Faltou `dhcp4-overrides` no cabo | `ip route` |
+| Sem internet depois do `netplan apply` | Roteador sem internet, ou sem rota `default` pelo `eno1` | `ip route`; `ping` no gateway do roteador; troca manual para a Wi-Fi (passo 2) |
+| Internet saindo pela Wi-Fi com o roteador funcionando | `route-metric` ausente ou invertido | `ip route`: o `eno1` deve ter `metric 100` |
 | PC com IP do cabo fora da tabela | Reserva DHCP ausente ou com MAC errado | Lista de clientes DHCP no roteador |
 | Containers sem acesso à internet | Faixa do Docker em conflito com a Wi-Fi | Passos 3 e 6; `docker network ls` e `ip route` |
 | Wi-Fi não sobe | Falta `wpasupplicant` | `dpkg -l wpasupplicant` |

@@ -34,7 +34,7 @@ reproducao/
 
 | Marco | Lição | Você termina quando... | Conceito do artigo |
 |---|---|---|---|
-| — | [00 Preparar os PCs e a rede](licoes/00-preparar-pcs-e-rede.md) | 6 PCs Ubuntu com IP fixo no cabo, internet pela Wi-Fi, relógios sincronizados, Docker e ferramentas | Fig. 1 (federação fog–cloud) |
+| — | [00 Preparar os PCs e a rede](licoes/00-preparar-pcs-e-rede.md) | 6 PCs Ubuntu com IP fixo e internet pelo cabo, Wi-Fi como redundância, relógios sincronizados, Docker e ferramentas | Fig. 1 (federação fog–cloud) |
 | M0 | [Build das imagens](licoes/m0-build.md) | Imagens do CE e de 7 microserviços no GHCR | §3.3.1, §6.1.2 |
 | M1 | [Clusters Kubernetes](licoes/m1-clusters.md) | fog1, fog2 e cloud1 (KinD) `Ready` com a topologia da Tabela 2, MetalLB e metrics-server | §2.3.2, §6.1.1 |
 | M2 | [Malha Istio multi-cluster](licoes/m2-malha-istio.md) | Um `curl` no fog1 recebe respostas de pods do fog2 e do cloud1 | §2.3.3, §2.3.5 |
