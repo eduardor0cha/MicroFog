@@ -33,12 +33,13 @@ kubectl apply -f $ISTIO/samples/addons/kiali.yaml
 kubectl -n istio-system rollout status deploy/kiali
 ```
 
-Para abrir no navegador de qualquer máquina do laboratório, por exemplo o `carga` (o repositório também traz `kiali-setup/*.yaml` para expor pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações):
+O repositório também traz `kiali-setup/*.yaml` para expor o Kiali pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações. Por isso, use um port-forward. O `--address 0.0.0.0` deixa a porta aberta para os outros computadores do switch, e não só para o próprio PC. O comando ocupa o terminal até `Ctrl+C`:
 
 ```bash
 fog1$ kubectl -n istio-system port-forward --address 0.0.0.0 svc/kiali 20001:20001
-# no navegador: http://192.168.0.11:20001
 ```
+
+Abra `http://192.168.0.11:20001` no navegador de um computador ligado ao switch. Os PCs rodam Ubuntu Server, sem navegador.
 
 Esta é uma instalação de Kiali **por cluster**: cada um mostra o tráfego visto pelos seus sidecars. A visão unificada multi-cluster (<https://kiali.io/docs/features/multi-cluster/>) fica como extensão.
 
@@ -82,7 +83,14 @@ Compare as contagens com os pesos do passo 2.
 
 ### 6. Guardar a configuração
 
-Copie `~/clusters`, `~/ce` e `~/certs*` de cada PC para o `carga`, como no M1, passo 5.
+`carga$` copie `~/clusters`, `~/ce`, `~/stores` e `~/certs*` de cada PC, como no M1, passo 5:
+
+```bash
+for h in fog1 fog2 cloud1; do
+  mkdir -p ~/backup/$h
+  scp -r "$h:clusters" "$h:ce" "$h:stores" "$h:certs*" ~/backup/$h/
+done
+```
 
 ## O que observar
 
@@ -91,9 +99,9 @@ Copie `~/clusters`, `~/ce` e `~/certs*` de cada PC para o `carga`, como no M1, p
 
 ## Verifique seu entendimento
 
-1. Edite manualmente o `weight` de um VS para 100/0 e gere carga de novo. O CE "conserta" o VS ou a sua mudança permanece? O que isso diz sobre o momento em que o CE aplica as regras de load balancing?
+1. Edite manualmente o `weight` de um VS para 100/0 e gere carga de novo. Liste os VS com `kubectl -n app2 get vs` e edite um com `KUBE_EDITOR=nano kubectl -n app2 edit vs <nome>`. O CE "conserta" o VS ou a sua mudança permanece? O que isso diz sobre o momento em que o CE aplica as regras de load balancing?
 2. Por que dividir pela **capacidade** (recursos alocados) faz mais sentido do que um round robin simples em fog heterogêneo?
-3. Com `controlengine.loadblancing.enabled = false`, como o Istio distribuiria o tráfego? Teste, se houver tempo.
+3. Com `controlengine.loadblancing.enabled = false`, como o Istio distribuiria o tráfego? Teste, se houver tempo: em cada cluster, `sed -i 's/loadblancing.enabled = true/loadblancing.enabled = false/' ~/ce/controller-configmap-<cluster>.yaml`, reinicie o CE como no [M6](m6-placement-distribuido.md), passo 5, apague o `app2` e repita o M6 e este marco.
 
 ## Problemas comuns
 

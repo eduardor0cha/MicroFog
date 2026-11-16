@@ -44,7 +44,7 @@ cloud1$ tc qdisc show dev $IF
 - `delay 50ms 5ms distribution normal`: 50 ms em média, com variação (jitter) de 5 ms.
 - `rate 100mbit`: limite de banda (opcional).
 
-A internet do cloud1 também sai pelo cabo, então a regra atrasa os downloads dele. Faça os pulls de imagens antes de aplicá-la.
+A internet do cloud1 também sai pelo cabo, então a regra atrasa os downloads dele. Faça os pulls de imagens antes de aplicá-la. Como os manifestos usam `imagePullPolicy: IfNotPresent` (M3, passo 4), as imagens do app2 já baixadas no M6 continuam no cache dos nós e não são baixadas de novo.
 
 Para dividir o atraso entre ida e volta, aplique metade aqui e metade na **entrada** (é preciso um dispositivo `ifb`). Ou aplique também na saída dos outros PCs, com um filtro só para o destino `192.168.0.13`. Para ver funcionando, a forma simples basta.
 
@@ -57,12 +57,31 @@ fog1$ ping -c 20 192.168.0.12 | tail -1     # deve ficar igual
 
 ### 4. Refazer o M6 com a WAN
 
-Com a regra ativa, apague o `app2` (`kubectl delete ns app2` nos três clusters) e repita os passos 2–5 do [M6](m6-placement-distribuido.md), com FP1 (`to_rand_fog`) e com FP2 (`to_cloud`). Meça a latência do `curl` do passo 4 em 10 repetições e compare com a do M6 sem WAN. Agora a diferença entre as políticas deve aparecer (Fig. 12).
+Com a regra ativa, apague o `app2`:
+
+```bash
+clusters$ kubectl delete ns app2
+```
+
+Repita os passos 2–5 do [M6](m6-placement-distribuido.md), com FP1 (`to_rand_fog`) e com FP2 (`to_cloud`). Em cada política, meça a latência do `curl` do passo 4 do M6 em 10 repetições. O `-w '%{time_total}'` imprime o tempo total da requisição, em segundos:
+
+`carga$`:
+
+```bash
+for i in $(seq 10); do
+  curl -s -o /dev/null -w '%{time_total}\n' \
+    -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
+    -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+done | awk '{s+=$1; print} END {printf "média: %.3f s\n", s/NR}'
+```
+
+Compare com a do M6 sem WAN, medida da mesma forma (remova a regra no passo 5, refaça e meça). Agora a diferença entre as políticas deve aparecer (Fig. 12).
 
 ### 5. Remover
 
 ```bash
-cloud1$ sudo tc qdisc del dev $IF root
+cloud1$ sudo tc qdisc del dev eno1 root
+cloud1$ tc qdisc show dev eno1        # volta a mostrar a fila padrão (fq_codel ou similar), sem netem
 ```
 
 A regra **não sobrevive a um reboot**. Isso é bom num laboratório, porque não fica esquecida. Registre o comando usado em cada experimento.

@@ -43,6 +43,7 @@ Decisões tomadas no planejamento (2026-11-02), com as alternativas descartadas 
 | D24 | MinIO fixado numa release de jan/2023 e Redis em `7.0` | Os manifestos usam `latest`, e a edição comunitária do MinIO mudou muito em 2025 | [M3](licoes/m3-data-stores.md), passo 0 |
 | D25 | Console do MinIO e Kiali por `port-forward`, sem `minioGW`/`minioVS`/`kiali-*` | Todos usam a porta 80 do ingress com hosts `"*"`, junto com o CE e as aplicações | M3, M7 |
 | D26 | `requests` do `istiod` reduzidos (100m / 512 Mi) | O padrão (500m / 2 GiB) pesa nos nós lógicos pequenos (1,5 vCPU / 3 GB) e reduz o allocatable que o CE enxerga | [M2](licoes/m2-malha-istio.md), passo 2 |
+| D29 | Subset `cloud1` da `control-engine-dr` corrigido para o rótulo `cluster: cloud1` | `controller-dr.yaml` seleciona `cluster: cloud2`, mas `controller-cloud1.yaml` rotula o pod com `cluster: cloud1`: o subset ficaria vazio | [M4](licoes/m4-control-engine.md), passo 1 |
 
 Hipótese para D21 e D22: a imagem publicada `samodha/microfog:latest` pode ter sido construída de uma versão do código anterior à do repositório. O M4, passo 5, testa isso.
 

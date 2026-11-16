@@ -65,17 +65,44 @@ Os guias originais falam em `<PUBLIC_IP_OF_THE_VM>`: é o endereço pelo qual **
 
 ### 1. Instalar o Ubuntu
 
-Ubuntu Server 26.04.1 marcando **OpenSSH server**. **Não** instale o Docker pelo instalador (que usa snap): vamos usar o pacote apt (passo 6).
+Ubuntu Server 26.04.1 marcando **OpenSSH server**. Ele é necessário porque todos os PCs são administrados por SSH a partir do `carga` (passo 4).
 
-Instale com o cabo conectado: o roteador do switch dá internet. A Wi-Fi é configurada no passo 2. Se faltar o `wpasupplicant`, que o Ubuntu Server usa para Wi-Fi, instale-o pelo cabo (`sudo apt install wpasupplicant`).
+**Não** instale o Docker pelo instalador. Ele usa o snap, que guarda a configuração em `/var/snap/docker/` em vez de `/etc/docker/`, e o `daemon.json` do passo 6 não teria efeito. Vamos usar o pacote apt (passo 6).
 
-Na BIOS: desative suspensão e hibernação, e ative "power on after AC loss" se existir.
+Instale com o cabo conectado: o roteador do switch dá internet. A Wi-Fi é configurada no passo 2. Confira se o `wpasupplicant`, que o Ubuntu Server usa para Wi-Fi, está instalado. Sem ele, a Wi-Fi não sobe:
+
+```bash
+dpkg -l wpasupplicant                 # "ii" no começo da linha = instalado
+sudo apt install -y wpasupplicant     # só se não estiver
+```
+
+Na BIOS: desative suspensão e hibernação, e ative "power on after AC loss" se existir. Um PC que suspende no meio de um experimento derruba o cluster inteiro dele, e o "power on after AC loss" faz o PC voltar sozinho depois de uma queda de energia.
 
 ### 2. Reserva DHCP e netplan com duas interfaces
 
-No roteador do switch, reserve para cada PC o IP da tabela de papéis, associado ao MAC da interface cabeada (`ip -br link` mostra o MAC). O IP do cabo vai para certificados e configurações do Istio (D12), então a reserva **não pode** mudar.
+`todas$` veja os nomes das interfaces e o MAC da cabeada:
 
-`todas$` (troque os nomes das interfaces, conforme `ip -br link`). A cabeada é `eno1` em todos os PCs. A Wi-Fi é `wlp2s0`, exceto no **PC2**, onde é `wlp3s0`. O arquivo a editar é o `/etc/netplan/00-installer-config.yaml`:
+```bash
+ip -br link      # 1ª coluna: nome; 3ª coluna: MAC
+```
+
+A cabeada é `eno1` em todos os PCs. A Wi-Fi é `wlp2s0`, exceto no **PC2**, onde é `wlp3s0`.
+
+No roteador do switch (pela página de administração dele, no navegador), reserve para cada PC o IP da tabela de papéis, associado ao MAC do `eno1`. O IP do cabo vai para certificados e configurações do Istio (D12), então a reserva **não pode** mudar.
+
+`todas$` veja que arquivo o instalador criou em `/etc/netplan/`:
+
+```bash
+ls /etc/netplan/
+```
+
+Abra esse arquivo. O nome pode variar; os comandos abaixo usam `00-installer-config.yaml`:
+
+```bash
+sudo nano /etc/netplan/00-installer-config.yaml
+```
+
+Apague o conteúdo e cole o bloco abaixo, com `wlp3s0` no lugar de `wlp2s0` no PC2 e o nome e a senha da Wi-Fi. Salve com `Ctrl+O`, `Enter`, e saia com `Ctrl+X`:
 
 ```yaml
 network:
@@ -95,7 +122,10 @@ network:
           password: "SENHA"
 ```
 
+O netplan reclama quando o arquivo, que guarda a senha da Wi-Fi, pode ser lido por outros usuários. Restrinja as permissões e aplique:
+
 ```bash
+sudo chmod 600 /etc/netplan/00-installer-config.yaml
 sudo netplan apply
 ip -4 addr show eno1      # deve mostrar o IP reservado (ex.: 192.168.0.11 no PC1)
 ip route                  # duas rotas "default": eno1 com metric 100 e Wi-Fi com metric 600
@@ -116,7 +146,7 @@ sudo netplan apply                    # volta ao normal quando o roteador se rec
 O Docker cria as suas redes em `172.17.0.0/16`, `172.18.0.0/16`, `172.19.0.0/16` e assim por diante, e a rede `kind` costuma ficar em `172.18.0.0/16`. Veja que faixa a Wi-Fi entrega:
 
 ```bash
-ip -4 addr show wlp2s0
+ip -4 addr show wlp2s0     # wlp3s0 no PC2
 ```
 
 Se ela cair em `172.16.0.0/12`, as redes do Docker podem cair por cima dela. **No laboratório é o caso**: a Wi-Fi entrega `172.23.64.0/20`, e o DNS do roteador do switch fica em `172.19.176.12`. Por isso, o passo 6 muda as faixas do Docker **antes** de criar qualquer cluster.
@@ -125,7 +155,20 @@ Confira também se a Wi-Fi **não** entrega endereços em `192.168.0.0/24`, a fa
 
 ### 4. Nomes, SSH e administração
 
-O hostname de cada PC é `pc-lamp-<n>`, com `<n>` igual ao número do PC (`sudo hostnamectl set-hostname pc-lamp-1` no PC1, e assim por diante). As lições se referem aos PCs pelo **papel** (`fog1$`, `carga$`, `scp fog1:...`), então o `/etc/hosts` de todos registra o hostname e o papel como apelido:
+O hostname de cada PC é `pc-lamp-<n>`, com `<n>` igual ao número do PC. `todas$` (troque o número em cada PC):
+
+```bash
+sudo hostnamectl set-hostname pc-lamp-1    # pc-lamp-2 no PC2, e assim por diante
+hostname                                    # confere
+```
+
+As lições se referem aos PCs pelo **papel** (`fog1$`, `carga$`, `scp fog1:...`). Sem DNS no switch, quem traduz esses nomes em IPs é o `/etc/hosts` de cada PC, que registra o hostname e o papel como apelido. `todas$`:
+
+```bash
+sudo nano /etc/hosts
+```
+
+**Apague** a linha que começa com `127.0.1.1`. O instalador a cria com o hostname antigo, e ela faria o próprio nome do PC apontar para o loopback em vez do IP do cabo. Acrescente ao final do arquivo e salve (`Ctrl+O`, `Enter`, `Ctrl+X`):
 
 ```
 192.168.0.11  pc-lamp-1  fog1
@@ -136,7 +179,27 @@ O hostname de cada PC é `pc-lamp-<n>`, com `<n>` igual ao número do PC (`sudo 
 192.168.0.16  pc-lamp-6  reserva
 ```
 
-No PC `carga` (pc-lamp-5), gere uma chave SSH e copie-a para os demais (`ssh-copy-id`). O `carga` vira o ponto de administração. Para o `scp` entre PCs de cluster (M2: certificados e remote secrets), faça o mesmo a partir do fog1, do fog2 e do cloud1, ou copie os arquivos passando pelo `carga`.
+```bash
+getent hosts fog1 pc-lamp-1     # os dois devem mostrar 192.168.0.11
+```
+
+O `carga` (pc-lamp-5) é o ponto de administração: dele saem os comandos para os outros PCs e as cópias de segurança (M1, passo 5). Uma chave SSH evita digitar a senha em cada `ssh` e `scp`. `carga$` gere a chave e copie-a para os demais. O `ssh-copy-id` pede a senha de cada PC uma única vez:
+
+```bash
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+for h in fog1 fog2 cloud1 fog3 reserva; do ssh-copy-id "$h"; done
+```
+
+No M2 e no [fog3-k3d](fog3-k3d.md), os PCs de cluster trocam certificados e remote secrets entre si com `scp`. `fog1$`, `fog2$` e `cloud1$` façam o mesmo para os outros PCs de cluster:
+
+```bash
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+for h in fog1 fog2 cloud1 fog3; do ssh-copy-id "$h"; done    # copiar para o próprio PC é inofensivo
+```
+
+```bash
+carga$ ssh fog1 hostname        # responde pc-lamp-1 sem pedir senha
+```
 
 ### 5. Relógios sincronizados
 
@@ -206,14 +269,49 @@ O IP `172.19.176.12`, que é o DNS do roteador do switch, também responde NTP. 
 
 ### 6. Docker Engine
 
-`todas$` (exceto o `reserva`, que só precisa dele se virar registry ou cluster de monitoramento). Siga o guia oficial <https://docs.docker.com/engine/install/ubuntu/>. Se o repositório da Docker ainda não tiver pacotes para o Ubuntu 26.04, use o pacote da distribuição (`sudo apt install docker.io`) e registre isso no Registro de execução.
+O KinD e o k3d rodam cada nó do Kubernetes como um container, então o Docker é a base dos clusters. O `carga` também precisa dele para o build das imagens (M0).
+
+`todas$` (exceto o `reserva`, que só precisa dele se virar registry ou cluster de monitoramento). Os comandos são os do guia oficial <https://docs.docker.com/engine/install/ubuntu/>. Primeiro, cadastre o repositório da Docker:
 
 ```bash
-sudo usermod -aG docker $USER     # saia e entre de novo no ssh
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+sudo tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+sudo apt update
+apt-cache policy docker-ce     # "Candidate:" com uma versão = há pacote para o 26.04
+```
+
+Se houver pacote:
+
+```bash
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Se o `apt update` der erro no repositório da Docker, ou o `Candidate:` vier `(none)`, ainda não há pacotes para o Ubuntu 26.04. Nesse caso, remova o repositório, use o pacote da distribuição e registre isso no Registro de execução:
+
+```bash
+sudo rm /etc/apt/sources.list.d/docker.sources
+sudo apt update
+sudo apt install -y docker.io docker-buildx
+```
+
+Para rodar `docker`, `kind` e `k3d` sem `sudo`, ponha o usuário no grupo `docker`. O grupo só vale numa sessão nova:
+
+```bash
+sudo usermod -aG docker $USER
+exit                              # entre de novo no ssh
 docker run --rm hello-world
 ```
 
-Mude as faixas de rede do Docker para longe da Wi-Fi (passo 3) e crie a rede `kind` numa faixa conhecida. O KinD reutiliza uma rede `kind` que já exista:
+Mude as faixas de rede do Docker para longe da Wi-Fi (passo 3) e crie a rede `kind` numa faixa conhecida. O KinD reutiliza uma rede `kind` que já exista. Fixar a faixa agora permite que o M1 reserve um pedaço dela para o MetalLB:
 
 ```bash
 echo '{ "default-address-pools": [{ "base": "10.200.0.0/16", "size": 24 }] }' \
@@ -244,16 +342,51 @@ stat -fc %T /sys/fs/cgroup     # esperado: cgroup2fs
 
 ### 8. Ferramentas
 
-`todas$` (PCs 1–5). Instale `kubectl`, `kind`, `istioctl`, `helm`, `mc` (cliente do MinIO), `jq` e `hey` (gerador de carga HTTP). No `fog3`, instale também o `k3d` ([fog3-k3d.md](fog3-k3d.md)). **As versões de `kind`, `istioctl` e `k3d` dependem do portão go/no-go do [M1](m1-clusters.md#portão-gono-go-de-versões)**: instale-as só quando chegar lá, e use a mesma versão em todos os PCs.
+`todas$` (PCs 1–5). Cada ferramenta tem um uso nas lições:
+
+| Ferramenta | Para quê |
+|---|---|
+| `kubectl` | administrar os clusters (todas as lições a partir do M1) |
+| `helm` | instalar o Loki e o Promtail ([gerador de carga](gerador-de-carga.md)) |
+| `mc` | cliente do MinIO: criar buckets, replicação e upload dos metadados (M3) |
+| `jq` | ler as saídas JSON do `kubectl` e das APIs do Control Engine |
+| `hey` | gerador de carga HTTP (M7) |
+| `git` | clonar o repositório MicroFog |
+
+**As versões de `kind`, `istioctl` e `k3d` dependem do portão go/no-go do [M1](m1-clusters.md#portão-gono-go-de-versões)**: elas são instaladas lá, com a mesma versão em todos os PCs. O `k3d` só vai no `fog3` ([fog3-k3d.md](fog3-k3d.md)).
+
+Pacotes do Ubuntu:
 
 ```bash
 sudo apt install -y jq curl git hey
-# kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
-# helm:    https://helm.sh/docs/intro/install/
-# mc:      https://min.io/docs/minio/linux/reference/minio-mc.html
 ```
 
-Clone o repositório em cada PC:
+`kubectl`, pelo binário oficial. O `kubectl` só é garantido com clusters de até uma versão *minor* de diferença. Se o portão do M1 der GO (Kubernetes 1.24), troque `KUBECTL_VERSION` por `v1.24.17` e repita:
+
+```bash
+KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+sudo install -m 0755 kubectl /usr/local/bin/kubectl && rm kubectl
+kubectl version --client
+```
+
+`helm`, pelo script oficial:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+helm version
+```
+
+`mc`. O M3 fixa o servidor MinIO numa release de jan/2023, e um `mc` muito mais novo pode usar comandos que esse servidor não entende (a sintaxe de `mc replicate add`, por exemplo, mudou). Por isso, instale um `mc` da mesma época. O projeto open source do MinIO foi arquivado, e o `dl.min.io` responde `410 Gone` desde então (conferido em 2026-11-16). Os binários antigos continuam nas releases do GitHub:
+
+```bash
+MC_RELEASE=RELEASE.2023-01-28T20-29-38Z
+curl -Lo mc "https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}"
+sudo install -m 0755 mc /usr/local/bin/mc && rm mc
+mc --version
+```
+
+Clone o repositório em cada PC. Os manifestos e os metadados das aplicações usados nas lições estão nele:
 
 ```bash
 git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
@@ -282,7 +415,7 @@ git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
 
 | Sintoma | Causa provável | Diagnóstico |
 |---|---|---|
-| Sem internet depois do `netplan apply` | Roteador sem internet, ou sem rota `default` pelo `eno1` | `ip route`; `ping` no gateway do roteador; troca manual para a Wi-Fi (passo 2) |
+| Sem internet depois do `netplan apply` | Roteador sem internet, ou sem rota `default` pelo `eno1` | `ip route`; `ping -c2 192.168.0.1` (gateway do roteador); troca manual para a Wi-Fi (passo 2) |
 | Internet saindo pela Wi-Fi com o roteador funcionando | `route-metric` ausente ou invertido | `ip route`: o `eno1` deve ter `metric 100` |
 | PC com IP do cabo fora da tabela | Reserva DHCP ausente ou com MAC errado | Lista de clientes DHCP no roteador |
 | Containers sem acesso à internet | Faixa do Docker em conflito com a Wi-Fi | Passos 3 e 6; `docker network ls` e `ip route` |
@@ -290,7 +423,7 @@ git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
 | `docker: permission denied` | O usuário ainda não está no grupo `docker` | Saia e entre de novo; `groups` |
 | `chronyc sources` nos demais sem `*` em `192.168.0.15` | `allow` ausente no `carga`, ou o `carga` ainda não sincronizou | `chronyc sources -v`; no `carga`, `chronyc clients` |
 | Todas as fontes `^?` com `Reach 0`, e `Cook 0` no `sudo chronyc -n authdata` | Fontes NTS padrão do Ubuntu ainda ativas; a rede recusa a porta 4460 | `ls /etc/chrony/sources.d/`: o `ubuntu-ntp-pools.sources` deve estar renomeado (passo 5) |
-| `chronyc sources` no `carga` sem `*` | NTP bloqueado (não era o caso em 2026-11-14) ou DNS falhando | Teste com o IP direto, por exemplo `server 216.239.35.0 iburst` |
+| `chronyc sources` no `carga` sem `*` | NTP bloqueado (não era o caso em 2026-11-14) ou DNS falhando | Teste com o IP direto do `time.google.com`, sem depender do DNS: `sudo chronyc add server 216.239.35.0 iburst` e, depois de ~30 s, `chronyc -n sources`. A fonte some no próximo `systemctl restart chrony` |
 
 ## Registro de execução
 

@@ -32,19 +32,111 @@ Com `primary = false`, o `addPR` responde `Operation not supported in Central Mo
 
 ## Passos
 
-1. Apague as aplicações dos marcos anteriores (`kubectl delete ns hcapp app2` em todos os clusters).
-2. Atualize os ConfigMaps conforme a tabela e reinicie os pods dos CEs. Comece pelos fogs e termine pelo cloud1.
-3. Confirme que um fog recusa PRs:
+### 1. Apagar as aplicações
 
-   ```bash
-   H='Host: control-engine.control-engine.svc.cluster.local'
-   curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
-        -d @pr-app2.json http://192.168.0.11/MicroFog/addPR
-   ```
+Apague as aplicações dos marcos anteriores. O `--ignore-not-found` evita erro onde o namespace não existe:
 
-4. Submeta o mesmo PR ao **cloud1** (`cluster: cloud1`). Mantenha `entryClusters: ["fog1"]`: o placement começa pelo fog1, mesmo sendo decidido no cloud1.
-5. Acompanhe os logs dos quatro CEs. No primário, procure `RETRIEVE_OTHER_CLUSTER_DATA_BEGIN/END` e `DEPLOY_COMMANDS_FORWARD`. Nos fogs, procure `DEPLOYMENT_OF_RECEIVED_COMMANDS_STARTED`.
-6. Chame a aplicação como no M6, passo 4.
+```bash
+clusters$ kubectl delete ns hcapp app2 --ignore-not-found
+```
+
+### 2. Guardar os ConfigMaps do modo distribuído
+
+Os ConfigMaps do M4–M6 voltam a ser usados depois. `clusters$` (troque `C` conforme o PC: `fog1`, `fog2`, `fog3` ou `cloud1`):
+
+```bash
+C=fog1
+cp ~/ce/controller-configmap-$C.yaml ~/ce/controller-configmap-$C-distribuido.yaml
+```
+
+### 3. Atualizar os ConfigMaps
+
+`fog1$`, `fog2$` e `fog3$`: modo centralizado, sem aceitar PRs e sem load balancing:
+
+```bash
+C=fog1
+F=~/ce/controller-configmap-$C.yaml
+sed -i -E 's/(operationmode\.distributed\s*=\s*)true/\1false/;
+           s/(operationmode\.primary\s*=\s*)true/\1false/;
+           s/(loadblancing\.enabled\s*=\s*)true/\1false/' $F
+grep -E "operationmode|loadblancing.enabled" $F
+```
+
+`cloud1$`: primário, com o V3, sem load balancing, e com **todos** os fogs como vizinhos. Depois do [fog3](fog3-k3d.md), o ConfigMap do cloud1 já lista `fog1`, `fog2` e `fog3`:
+
+```bash
+F=~/ce/controller-configmap-cloud1.yaml
+sed -i -E 's/(operationmode\.distributed\s*=\s*)true/\1false/;
+           s/(placementalgo\.version\s*=\s*)V2/\1V3/;
+           s/(loadblancing\.enabled\s*=\s*)true/\1false/' $F
+grep -E "operationmode|placementalgo.version|loadblancing.enabled|adjacent" $F
+```
+
+Confira na saída que os valores batem com a tabela de configuração acima.
+
+### 4. Reiniciar os CEs
+
+O CE só lê o ConfigMap ao iniciar. Comece pelos fogs e termine pelo cloud1, para que o primário já encontre os outros CEs no modo novo.
+
+`fog1$`, `fog2$` e `fog3$`, depois `cloud1$` (troque `C`):
+
+```bash
+C=fog1
+kubectl -n control-engine apply -f ~/ce/controller-configmap-$C.yaml
+kubectl -n control-engine delete pod controller-$C
+kubectl -n control-engine apply -f ~/ce/controller-$C.yaml
+kubectl -n control-engine wait --for=condition=Ready pod/controller-$C --timeout=300s
+```
+
+### 5. Confirmar que um fog recusa PRs
+
+`carga$`:
+
+```bash
+H='Host: control-engine.control-engine.svc.cluster.local'
+curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
+     -d @$HOME/pr-app2.json http://192.168.0.11/MicroFog/addPR
+```
+
+Esperado: `Operation not supported in Central Mode`.
+
+### 6. Submeter ao cloud1
+
+Abra antes os logs dos quatro CEs, um terminal por PC (`Ctrl+C` encerra):
+
+```bash
+fog1$   kubectl -n control-engine logs -f controller-fog1   -c controller-fog1
+fog2$   kubectl -n control-engine logs -f controller-fog2   -c controller-fog2
+fog3$   kubectl -n control-engine logs -f controller-fog3   -c controller-fog3
+cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
+```
+
+`carga$` submeta o mesmo PR ao **cloud1**. Mantenha `entryClusters: ["fog1"]`: o placement começa pelo fog1, mesmo sendo decidido no cloud1:
+
+```bash
+curl -s -H "$H" -H "cluster: cloud1" -H 'Content-Type: application/json' \
+     -d @$HOME/pr-app2.json http://192.168.0.11/MicroFog/addPR
+```
+
+No primário, procure `RETRIEVE_OTHER_CLUSTER_DATA_BEGIN/END` e `DEPLOY_COMMANDS_FORWARD`. Nos fogs, procure `DEPLOYMENT_OF_RECEIVED_COMMANDS_STARTED`.
+
+### 7. Chamar a aplicação
+
+`carga$`:
+
+```bash
+curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
+     -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+```
+
+### 8. Voltar ao modo distribuído
+
+`clusters$` restaure os ConfigMaps do passo 2 e reinicie os CEs como no passo 4, de novo com os fogs primeiro:
+
+```bash
+C=fog1
+cp ~/ce/controller-configmap-$C-distribuido.yaml ~/ce/controller-configmap-$C.yaml
+```
 
 ## O que observar
 

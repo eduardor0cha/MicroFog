@@ -36,12 +36,20 @@ Por isso os autores publicaram uma imagem por microserviço (`samodha/dummy-micr
 
 Faça o build no PC `carga`, que não roda cluster e não disputa CPU com eles. Para não depender da versão de JDK do Ubuntu 26.04 (o projeto compila para Java 11, e a imagem roda em OpenJDK 17), o Maven roda **dentro de um container**.
 
+Os autores publicaram só as imagens prontas, no Docker Hub. Compilar as nossas a partir deste código garante que o que roda nos clusters é o código que estamos lendo, e as imagens dos autores ficam como alternativa (D15).
+
 ### 1. Token do GHCR
 
-No GitHub: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages`.
+As imagens ficam no GHCR, o registry do GitHub, que não tem o limite de pulls do Docker Hub (D16). Para publicar nele, o Docker precisa de um token.
+
+No GitHub: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages`. Copie o token gerado.
+
+`carga$` o `read -s` lê o token sem mostrá-lo na tela nem gravá-lo no histórico do shell. Cole o token e tecle `Enter`:
 
 ```bash
-carga$ echo "$CR_PAT" | docker login ghcr.io -u eduardor0cha --password-stdin
+read -s CR_PAT
+echo "$CR_PAT" | docker login ghcr.io -u eduardor0cha --password-stdin    # "Login Succeeded"
+unset CR_PAT
 ```
 
 ### 2. Build do CE
@@ -59,12 +67,26 @@ carga$ docker push ghcr.io/eduardor0cha/microfog:$TAG
 
 ### 3. Build dos microserviços de teste
 
-Para cada microserviço, troque o namespace e o ConfigMap no `application.properties`, compile e publique. Esboço do script (salve como `reproducao/scripts/build-dummies.sh` quando tiver testado):
+Para cada microserviço, o script abaixo troca o namespace e o ConfigMap no `application.properties`, compila e publica.
+
+`carga$` antes, **confira** os nomes dos ConfigMaps. O script supõe que cada um se chama `<microserviço>-config`:
 
 ```bash
 cd ~/MicroFog/Workload_Generator/dummy-micro-java
+grep -h "name:" ../sample-deployment-resources/*/*-config.yaml
+```
+
+`carga$` grave o script:
+
+```bash
+cat > ~/build-dummies.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+cd ~/MicroFog/Workload_Generator/dummy-micro-java
 PROPS=src/main/resources/application.properties
 cp $PROPS /tmp/application.properties.orig
+# Restaura o arquivo original mesmo se um build falhar no meio do laço
+trap 'cp /tmp/application.properties.orig $PROPS' EXIT
 
 # microserviço:namespace
 for pair in hcm1:hcapp hcm2:hcapp hcm3:hcapp a2m1:app2 a2m2:app2 a2m3:app2 a2m4:app2; do
@@ -76,19 +98,41 @@ for pair in hcm1:hcapp hcm2:hcapp hcm3:hcapp a2m1:app2 a2m2:app2 a2m3:app2 a2m4:
   docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/eduardor0cha/dummy-microservice:$ms .
   docker push ghcr.io/eduardor0cha/dummy-microservice:$ms
 done
-cp /tmp/application.properties.orig $PROPS
+SCRIPT
 ```
 
-Antes do laço, **confira** os nomes dos ConfigMaps (`grep -h "name:" ../sample-deployment-resources/*/*-config.yaml`).
+`carga$` rode o script e confira que o `application.properties` voltou ao original:
+
+```bash
+bash ~/build-dummies.sh
+cd ~/MicroFog && git status --short     # não deve listar o application.properties
+```
+
+Quando o script funcionar, guarde uma cópia em `reproducao/scripts/build-dummies.sh`, neste repositório.
 
 ### 4. Tornar os pacotes públicos
 
 No GitHub: *Your profile → Packages → microfog → Package settings → Change visibility → Public*. Repita para `dummy-microservice`. Sem isso, os nós KinD precisariam de `imagePullSecrets`.
 
-### 5. Registrar os digests
+Confira sem login. O `docker logout` simula um nó do KinD, que não tem credenciais:
 
 ```bash
-carga$ docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/microfog:$TAG
+carga$ docker logout ghcr.io
+carga$ docker pull ghcr.io/eduardor0cha/dummy-microservice:hcm1    # deve baixar sem "denied"
+```
+
+### 5. Registrar os digests
+
+O digest identifica o conteúdo da imagem. Os manifestos usam o digest, e não a tag, para que uma republicação da tag não troque a imagem no meio dos experimentos (D15).
+
+`carga$` (o `TAG` do passo 2 se perde se você abriu outro shell; recrie-o com o mesmo comando):
+
+```bash
+cd ~/MicroFog/ControlEngine && TAG=src-$(git rev-parse --short HEAD)
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/microfog:$TAG
+for ms in hcm1 hcm2 hcm3 a2m1 a2m2 a2m3 a2m4; do
+  echo "$ms $(docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/dummy-microservice:$ms)"
+done
 ```
 
 Anote os digests na tabela abaixo.
@@ -110,7 +154,7 @@ Os manifestos do repositório usam `samodha/...:latest` com `imagePullPolicy: Al
 
 A tag `samodha/microfog:latest` foi publicada em 2023-02-10, um dia depois do último commit do código do CE (2023-02-09). É provável, mas não garantido, que corresponda a este código.
 
-Um script `reproducao/scripts/set-images.sh` (a escrever no M3, quando os YAMLs forem enviados ao MinIO) vai reescrever os campos `image:` em:
+O script `~/set-images.sh`, escrito no [M3, passo 4](m3-data-stores.md#4-upload-dos-yamls-das-aplicações), reescreve os campos `image:` em:
 - `Prototype_Setup/control-engine-setup/controller-*.yaml` (CE);
 - os YAMLs das aplicações antes do upload para o MinIO (M3).
 
@@ -123,7 +167,7 @@ Se o build falhar por causa de dependências de 2022, **não pare o plano**: sig
 
 ## Verifique seu entendimento
 
-1. Abra `metadata/SmartHealthAppSetup.java`. Quantos microserviços e quantos serviços compostos tem o hcApp? Compare com a Fig. 2 do artigo.
+1. Abra os metadados do hcApp (`less ~/MicroFog/ControlEngine/src/main/java/com/microfog/controlengine/metadata/SmartHealthAppSetup.java`). Quantos microserviços e quantos serviços compostos tem o hcApp? Compare com a Fig. 2 do artigo.
 2. Qual o requisito de CPU e de *throughput* de cada microserviço do hcApp? Se um PR pedir 200 req/s, quantas instâncias de hcm2 o V2 vai colocar? *(Dica: `placementlogic/DistributedPlacement.java`, método `getInstancesToPlace`.)*
 3. Por que a imagem do dummy precisa saber o próprio namespace?
 

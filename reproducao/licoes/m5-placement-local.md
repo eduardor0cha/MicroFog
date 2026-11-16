@@ -65,7 +65,9 @@ As diferenças entre esses timestamps são a matéria-prima das figuras do artig
 
 ### 1. Prever
 
-Antes de submeter, consulte os recursos livres do cloud1:
+Os comandos `curl` desta lição saem do `carga`, como os de um usuário. Antes de submeter, consulte os recursos livres do cloud1.
+
+`carga$`:
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -76,7 +78,16 @@ curl -s -H "$H" -H "cluster: cloud1" http://192.168.0.13/MicroFog/getClusterData
 
 ### 2. Submeter
 
+Antes, `cloud1$` guarde as chaves do Redis, para comparar depois do placement (passo 5):
+
 ```bash
+kubectl -n control-engine exec redis -c redis -- redis-cli --scan | sort > ~/redis-antes.txt
+```
+
+`carga$` (o PR fica em `~/pr-hcapp.json`, reaproveitado nas próximas lições):
+
+```bash
+cd ~
 cat > pr-hcapp.json <<'EOF'
 {"applicationId":"hcApp","placedMicroservices":[],"compositionOnlyPlacements":[],
  "entryClusters":["cloud1"],
@@ -92,12 +103,19 @@ Esperado: `Placement Request Successfully Submitted`.
 
 ### 3. Acompanhar
 
+Os dois comandos ficam rodando até `Ctrl+C`, então use **dois terminais** no cloud1. De preferência, abra-os antes do passo 2, para ver o fluxo desde o `NEW_PR_RECEIVED`:
+
 ```bash
 cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1 | grep -E "[A-Z_]{6,} - [0-9]{13}|Created"
+```
+
+```bash
 cloud1$ kubectl -n hcapp get pods -o wide -w
 ```
 
 ### 4. Chamar a aplicação
+
+`carga$`:
 
 ```bash
 # S1: hcm1 → hcm2
@@ -111,31 +129,64 @@ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/js
 
 ### 5. Limpar
 
-Para repetir o experimento, apague o namespace da aplicação: `kubectl delete ns hcapp`. Confira no código se o CE guarda algum estado do placement anterior (no Redis ou em memória) e anote o que encontrar.
+Para repetir o experimento, apague o namespace da aplicação. O `delete ns` só volta quando todos os pods terminaram:
+
+```bash
+cloud1$ kubectl delete ns hcapp
+```
+
+Confira se o CE guarda algum estado do placement anterior, no Redis ou em memória, e anote o que encontrar. No Redis, compare as chaves com as de antes do PR (passo 2):
+
+```bash
+cloud1$ kubectl -n control-engine exec redis -c redis -- redis-cli --scan | sort > ~/redis-depois.txt
+cloud1$ diff ~/redis-antes.txt ~/redis-depois.txt      # chaves criadas pelo placement
+```
+
+Em memória, procure campos estáticos e coleções nos controladores do CE:
+
+```bash
+grep -rn -E "static .*(Map|List|Set)<" ~/MicroFog/ControlEngine/src/main/java/com/microfog/controlengine/
+```
 
 ### 6. Repetir com entrada no fog1
 
-Com o `hcapp` apagado, mude `entryClusters` para `["fog1"]` e submeta **ao fog1**. Antes, consulte os recursos livres do fog1 (`cluster: fog1` no `getClusterData`) e faça uma nova previsão: agora o cluster de entrada já roda Istio, CE e data stores.
+Com o `hcapp` apagado, mude `entryClusters` para `["fog1"]` e submeta **ao fog1**. Antes, consulte os recursos livres do fog1 e faça uma nova previsão: agora o cluster de entrada já roda Istio, CE e data stores.
+
+`carga$`:
 
 ```bash
-sed 's/"cloud1"/"fog1"/' pr-hcapp.json > pr-hcapp-fog1.json
-curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
-     -d @pr-hcapp-fog1.json http://192.168.0.11/MicroFog/addPR
-fog1$ kubectl -n hcapp get pods -o wide -w
+curl -s -H "$H" -H "cluster: fog1" http://192.168.0.11/MicroFog/getClusterData | jq
 ```
 
-Chame a aplicação como no passo 4, trocando o IP por `192.168.0.11`.
+```bash
+fog1$ kubectl -n hcapp get pods -o wide -w      # num terminal à parte
+```
+
+```bash
+carga$ cd ~ && sed 's/"cloud1"/"fog1"/' pr-hcapp.json > pr-hcapp-fog1.json
+carga$ curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
+         -d @pr-hcapp-fog1.json http://192.168.0.11/MicroFog/addPR
+```
+
+Chame a aplicação pelo fog1:
+
+```bash
+carga$ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
+         -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+carga$ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
+         -X POST http://192.168.0.11/DummyM/addData -d '{"message":[65,68,67],"dataProcessingTime":30}'
+```
 
 ## O que observar
 
 - O placement real bate com a sua previsão? Se não bateu, descubra por quê no código.
 - `kubectl -n hcapp get pods -o yaml | grep -A3 resources` mostra que o CE **define os requests** de cada pod, mesmo que os YAMLs do MinIO não tenham `resources`.
-- Veja como o pod é fixado no nó (`nodeName`? `nodeSelector`?). Isso explica como o CE pode usar o control-plane, como o `cloud1-control-node` da Tabela 3.
+- Veja como o pod é fixado no nó (`kubectl -n hcapp get pods -o yaml | grep -E -A2 "nodeName|nodeSelector"`). Isso explica como o CE pode usar o control-plane, como o `cloud1-control-node` da Tabela 3.
 - Os tempos entre `NEW_PR_RECEIVED` e `PLACEMENT_COMPLETED`.
 
 ## Verifique seu entendimento
 
-1. Submeta o mesmo PR com `throughput` = 250. Quantas instâncias de cada microserviço? Ainda cabe no cloud1?
+1. Submeta o mesmo PR com `throughput` = 250, com o `hcapp` apagado antes (`cloud1$ kubectl delete ns hcapp`; `carga$ sed 's/"value":100/"value":250/' ~/pr-hcapp.json > ~/pr-hcapp-250.json` e o `curl` do passo 2 com `-d @pr-hcapp-250.json`). Quantas instâncias de cada microserviço? Ainda cabe no cloud1?
 2. Com throughput 100 e entrada no fog1 (passo 6), o hcApp coube todo no fog1? Se não coube, o que aconteceu com o resto? *(Esse é o assunto do M6.)*
 3. Que parte do artigo descreve o que acabou de acontecer entre `PLACEMENT_ALGO_COMPLETED` e `PLACEMENT_COMPLETED`?
 

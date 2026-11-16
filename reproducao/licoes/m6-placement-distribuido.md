@@ -42,13 +42,18 @@ Um único serviço composto (`APP2_S1`): a2m1 → a2m2, e a2m2 agrega a2m3 e a2m
 
 ### 1. Prever
 
-Com throughput **200**: quantas instâncias de cada microserviço, e quanto de CPU no total (incluindo 0,1 de sidecar por pod)? Compare com o que está livre em cada cluster:
+Com throughput **200**: quantas instâncias de cada microserviço, e quanto de CPU no total (incluindo 0,1 de sidecar por pod)? Compare com o que está livre em cada cluster.
+
+O filtro `jq` calcula a CPU livre de cada nó como o CE faz (`FogDevice.getRemainingCpu`): o total menos o maior valor entre o usado e o alocado.
+
+`carga$`:
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
 for c in fog1 fog2 cloud1; do
   echo "== $c"
-  curl -s -H "$H" -H "cluster: $c" http://192.168.0.11/MicroFog/getClusterData | jq '.'   # filtre os campos de CPU livre
+  curl -s -H "$H" -H "cluster: $c" http://192.168.0.11/MicroFog/getClusterData \
+    | jq -r '.fogDevices[] | "\(.nodeName)  total=\(.resourcesTotal.cpu)  livre=\(.resourcesTotal.cpu - ([.resourcesUsed.cpu, .resourcesAllocated.cpu] | max))"'
 done
 ```
 
@@ -56,7 +61,12 @@ Escreva: o que fica no fog1, o que vai para o fog2 e o que (se algo) vai para o 
 
 ### 2. Submeter ao fog1
 
+Abra antes os três terminais do passo 3, para ver o PR chegando.
+
+`carga$` (se pela previsão você aumentou o throughput, troque o `200`):
+
 ```bash
+cd ~
 cat > pr-app2.json <<'EOF'
 {"applicationId":"app2","placedMicroservices":[],"compositionOnlyPlacements":[],
  "entryClusters":["fog1"],
@@ -86,6 +96,8 @@ clusters$ kubectl -n app2 get svc,vs,dr
 
 ### 4. Chamar a aplicação
 
+`carga$`:
+
 ```bash
 curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
      -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
@@ -95,7 +107,26 @@ A requisição entra no fog1, e cada chamada para um microserviço que está em 
 
 ### 5. Trocar a política
 
-Apague o `app2` em todos os clusters (`kubectl delete ns app2`). Mude o fog1 para `controlengine.forwardpolicy = to_cloud`. Para o CE ler o ConfigMap novo, reinicie o pod (`kubectl delete pod controller-fog1` e aplique de novo). Repita os passos 2–4. Essa é a comparação FP1 × FP2 da Fig. 12.
+Essa é a comparação FP1 × FP2 da Fig. 12.
+
+Apague o `app2` em todos os clusters:
+
+```bash
+clusters$ kubectl delete ns app2
+```
+
+`fog1$` mude a política para `to_cloud`. O CE só lê o ConfigMap ao iniciar, e o pod não pertence a um Deployment, então é preciso apagá-lo e aplicá-lo de novo:
+
+```bash
+sed -i 's/forwardpolicy = to_rand_fog/forwardpolicy = to_cloud/' ~/ce/controller-configmap-fog1.yaml
+grep forwardpolicy ~/ce/controller-configmap-fog1.yaml
+kubectl -n control-engine apply -f ~/ce/controller-configmap-fog1.yaml
+kubectl -n control-engine delete pod controller-fog1
+kubectl -n control-engine apply -f ~/ce/controller-fog1.yaml
+kubectl -n control-engine wait --for=condition=Ready pod/controller-fog1 --timeout=300s
+```
+
+Repita os passos 2–4. No fim, volte o fog1 para FP1 com os mesmos comandos, trocando `to_cloud` por `to_rand_fog` no `sed` (`s/forwardpolicy = to_cloud/forwardpolicy = to_rand_fog/`).
 
 ## O que observar
 
@@ -107,7 +138,7 @@ Apague o `app2` em todos os clusters (`kubectl delete ns app2`). Mude o fog1 par
 
 1. Por que o Service `a2m2` precisa existir num cluster que não tem nenhum pod a2m2?
 2. Com FP2 (`to_cloud`), a latência do `curl` do passo 4 aumentou ou diminuiu em relação ao FP1? Isso bate com a Fig. 12? Com que ressalva (este marco roda sem WAN emulada; a lição da [WAN](wan-netem.md) refaz a comparação)?
-3. Mude o fog1 para `controlengine.placementalgo.version = V1` e repita com FP1. Compare com a Tabela 3: o placement vai mais para a cloud?
+3. Mude o fog1 para `controlengine.placementalgo.version = V1` (`sed -i -E 's/(placementalgo.version\s*=\s*)V2/\1V1/' ~/ce/controller-configmap-fog1.yaml` e os mesmos `apply`/`delete pod`/`apply` do passo 5) e repita com FP1. Compare com a Tabela 3: o placement vai mais para a cloud?
 4. O que acontece se **nenhum** cluster tiver recursos? Leia `selectRandomCluster` com uma lista vazia.
 
 ## Problemas comuns

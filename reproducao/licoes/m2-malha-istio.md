@@ -43,13 +43,20 @@ Os arquivos do repositório usados aqui (`Prototype_Setup/cluster-setup/`):
 
 ## Passos
 
-Versão do Istio: a definida no portão do [M1](m1-clusters.md#portão-gono-go-de-versões). Abaixo, `$ISTIO` é o diretório extraído (ex.: `~/istio-1.16.7`).
+Versão do Istio: a definida no portão do [M1](m1-clusters.md#portão-gono-go-de-versões). Abaixo, `$ISTIO` é o diretório extraído (ex.: `~/istio-1.16.7`), gravado no `~/.bashrc` no M1. Confira antes de começar:
+
+```bash
+echo $ISTIO && ls $ISTIO/bin/istioctl
+```
 
 ### 1. CA raiz comum
 
 `fog1$` Gere uma CA raiz e um certificado intermediário por cluster. Isso só é feito no fog1.
 
+Os certificados são gerados por um Makefile que vem com o Istio. O Ubuntu Server não traz o `make`, então instale-o antes:
+
 ```bash
+sudo apt install -y make
 mkdir -p ~/certs && cd ~/certs
 make -f $ISTIO/tools/certs/Makefile.selfsigned.mk root-ca
 for c in fog1 fog2 cloud1; do make -f $ISTIO/tools/certs/Makefile.selfsigned.mk $c-cacerts; done
@@ -57,26 +64,39 @@ scp -r ~/certs/fog2   fog2:~/certs-fog2
 scp -r ~/certs/cloud1 cloud1:~/certs-cloud1
 ```
 
-`clusters$` Crie o secret `cacerts` **antes** de instalar o Istio. Exemplo no fog1; nos outros PCs, troque o diretório (`~/certs-fog2`, `~/certs-cloud1`):
+`clusters$` Crie o secret `cacerts` **antes** de instalar o Istio. Troque `D` conforme o PC: `~/certs/fog1` no fog1, `~/certs-fog2` no fog2, `~/certs-cloud1` no cloud1:
 
 ```bash
+D=~/certs/fog1
+ls $D      # ca-cert.pem  ca-key.pem  cert-chain.pem  root-cert.pem
+
 kubectl create namespace istio-system
 kubectl -n istio-system create secret generic cacerts \
-  --from-file=$HOME/certs/fog1/ca-cert.pem --from-file=$HOME/certs/fog1/ca-key.pem \
-  --from-file=$HOME/certs/fog1/root-cert.pem --from-file=$HOME/certs/fog1/cert-chain.pem
+  --from-file=$D/ca-cert.pem --from-file=$D/ca-key.pem \
+  --from-file=$D/root-cert.pem --from-file=$D/cert-chain.pem
 ```
 
 ### 2. Rede do namespace e instalação
 
-`clusters$` (fog1 → `network1`, fog2 → `network2`, cloud1 → `network3`, como nos arquivos do repositório). Exemplo no fog1; no fog2, use `network2`, `fog2/istio-fog2.yaml` e `192.168.0.12`; no cloud1, `network3`, `cloud1/istio-cloud1.yaml` e `192.168.0.13`:
+`clusters$` troque as três variáveis conforme o PC, com as redes dos arquivos do repositório:
+
+| PC | `C` | `NET` | `IP` |
+|---|---|---|---|
+| fog1 | `fog1` | `network1` | `192.168.0.11` |
+| fog2 | `fog2` | `network2` | `192.168.0.12` |
+| cloud1 | `cloud1` | `network3` | `192.168.0.13` |
 
 ```bash
-kubectl label namespace istio-system topology.istio.io/network=network1
+C=fog1
+NET=network1
+IP=192.168.0.11
 
-sed "s/<PUBLIC_IP_OF_THE_VM>/192.168.0.11/" \
-  ~/MicroFog/Prototype_Setup/cluster-setup/fog1/istio-fog1.yaml > ~/clusters/istio-fog1.yaml
+kubectl label namespace istio-system topology.istio.io/network=$NET
 
-$ISTIO/bin/istioctl install -y -f ~/clusters/istio-fog1.yaml \
+sed "s/<PUBLIC_IP_OF_THE_VM>/$IP/" \
+  ~/MicroFog/Prototype_Setup/cluster-setup/$C/istio-$C.yaml > ~/clusters/istio-$C.yaml
+
+$ISTIO/bin/istioctl install -y -f ~/clusters/istio-$C.yaml \
   --set components.pilot.k8s.resources.requests.cpu=100m \
   --set components.pilot.k8s.resources.requests.memory=512Mi
 ```
@@ -107,46 +127,62 @@ fog2$ curl -k https://192.168.0.11:6443/version
 
 ### 4. `meshNetworks`
 
-`clusters$` Diga a cada `istiod` onde fica o gateway de cada rede:
+`clusters$` Diga a cada `istiod` onde fica o gateway de cada rede. A lista fica na chave `meshNetworks` do ConfigMap `istio`, ao lado (e não dentro) da chave `mesh`, como no guia original (`Prototype_Setup/docs/cluster_setup.pdf`). O comando é o mesmo nos três PCs:
 
 ```bash
-kubectl -n istio-system edit configmap istio
+kubectl -n istio-system patch configmap istio --type merge -p '
+data:
+  meshNetworks: |-
+    networks:
+      network1:
+        endpoints: [{fromRegistry: kind-fog1}]
+        gateways: [{address: 192.168.0.11, port: 15443}]
+      network2:
+        endpoints: [{fromRegistry: kind-fog2}]
+        gateways: [{address: 192.168.0.12, port: 15443}]
+      network3:
+        endpoints: [{fromRegistry: kind-cloud1}]
+        gateways: [{address: 192.168.0.13, port: 15443}]
+'
+kubectl -n istio-system get configmap istio -o jsonpath='{.data.meshNetworks}'
 ```
 
-Dentro de `data.mesh`, acrescente:
+`kind-fog1` etc. são os `clusterName` definidos nos arquivos `istio-*.yaml`. O `istiod` relê o ConfigMap sozinho; confira no log:
 
-```yaml
-meshNetworks:
-  networks:
-    network1:
-      endpoints: [{fromRegistry: kind-fog1}]
-      gateways: [{address: 192.168.0.11, port: 15443}]
-    network2:
-      endpoints: [{fromRegistry: kind-fog2}]
-      gateways: [{address: 192.168.0.12, port: 15443}]
-    network3:
-      endpoints: [{fromRegistry: kind-cloud1}]
-      gateways: [{address: 192.168.0.13, port: 15443}]
+```bash
+kubectl -n istio-system logs deploy/istiod --since=2m | grep -i meshnetworks
 ```
-
-`kind-fog1` etc. são os `clusterName` definidos nos arquivos `istio-*.yaml`.
 
 ### 5. Remote secrets
 
-Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada PC **gera** o seu, apontando para o próprio IP, e o envia às outras:
+Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada PC **gera** o seu, apontando para o próprio IP, e o envia aos outros:
 
 ```bash
-fog1$ $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog1 \
-        --server=https://192.168.0.11:6443 > secret-fog1.yaml
-fog1$ scp secret-fog1.yaml fog2: && scp secret-fog1.yaml cloud1:
+fog1$   cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog1 \
+          --server=https://192.168.0.11:6443 > secret-fog1.yaml
+fog1$   scp secret-fog1.yaml fog2: && scp secret-fog1.yaml cloud1:
+
+fog2$   cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog2 \
+          --server=https://192.168.0.12:6443 > secret-fog2.yaml
+fog2$   scp secret-fog2.yaml fog1: && scp secret-fog2.yaml cloud1:
+
+cloud1$ cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-cloud1 \
+          --server=https://192.168.0.13:6443 > secret-cloud1.yaml
+cloud1$ scp secret-cloud1.yaml fog1: && scp secret-cloud1.yaml fog2:
 ```
 
 No Istio 1.16, o comando é experimental (`istioctl x create-remote-secret`). Nas versões do fallback, ele virou `istioctl create-remote-secret`.
 
-Repita no fog2 e no cloud1. Depois, em cada PC, aplique os dois secrets recebidos:
+Depois, em cada PC, aplique os dois secrets recebidos:
 
 ```bash
-fog2$ kubectl apply -f secret-fog1.yaml -f secret-cloud1.yaml
+fog1$   kubectl apply -f ~/secret-fog2.yaml -f ~/secret-cloud1.yaml
+fog2$   kubectl apply -f ~/secret-fog1.yaml -f ~/secret-cloud1.yaml
+cloud1$ kubectl apply -f ~/secret-fog1.yaml -f ~/secret-fog2.yaml
+```
+
+```bash
+kubectl -n istio-system get secrets -l istio/multiCluster=true    # dois secrets istio-remote-secret-*
 ```
 
 `Prototype_Setup/cluster-setup/secret_sample.yaml` mostra o formato esperado. **Nunca** commite secrets reais: eles dão acesso administrativo ao cluster.
@@ -177,7 +213,15 @@ fog1$ for i in $(seq 10); do
 
 ### 7. Guardar a configuração
 
-Copie `~/clusters` e `~/certs*` de cada PC para o `carga`, como no M1, passo 5. O `~/certs` do fog1 guarda a CA raiz: sem ele, um cluster novo (o fog3, por exemplo) não entra na malha sem refazer os certificados de todos.
+`carga$` copie `~/clusters` e `~/certs*` de cada PC, como no M1, passo 5. O `~/certs` do fog1 guarda a CA raiz: sem ele, um cluster novo (o fog3, por exemplo) não entra na malha sem refazer os certificados de todos.
+
+```bash
+for h in fog1 fog2 cloud1; do
+  mkdir -p ~/backup/$h
+  scp -r "$h:clusters" "$h:certs*" ~/backup/$h/
+done
+ls ~/backup/fog1/certs/root-ca.conf ~/backup/fog1/certs/root-key.pem    # a CA raiz
+```
 
 ## O que observar
 
