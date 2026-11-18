@@ -35,7 +35,7 @@ reproducao/
 | Marco | Lição | Você termina quando... | Conceito do artigo |
 |---|---|---|---|
 | — | [00 Preparar os PCs e a rede](licoes/00-preparar-pcs-e-rede.md) | 6 PCs Ubuntu com IP fixo e internet pelo cabo, Wi-Fi como redundância, relógios sincronizados, Docker e ferramentas | Fig. 1 (federação fog–cloud) |
-| M0 | [Build das imagens](licoes/m0-build.md) | Imagens do CE e de 7 microserviços no GHCR | §3.3.1, §6.1.2 |
+| M0 | [Build das imagens](licoes/m0-build.md) | Imagens do CE e de 7 microserviços no GHCR, na organização do grupo | §3.3.1, §6.1.2 |
 | M1 | [Clusters Kubernetes](licoes/m1-clusters.md) | fog1, fog2 e cloud1 (KinD) `Ready` com a topologia da Tabela 2, MetalLB e metrics-server | §2.3.2, §6.1.1 |
 | M2 | [Malha Istio multi-cluster](licoes/m2-malha-istio.md) | Um `curl` no fog1 recebe respostas de pods do fog2 e do cloud1 | §2.3.3, §2.3.5 |
 | M3 | [Data stores](licoes/m3-data-stores.md) | MinIO replicado e Redis primário/réplicas | §3.3.2, §4.1, §4.2, Fig. 6 |
@@ -56,7 +56,7 @@ Do M0 ao M7, cada mecanismo central (placement, forwarding, deploy cruzado, load
 - **Onde rodar cada comando**: o prompt indica o PC pelo papel. `fog1$` é o PC do fog1, `cloud1$` o do cloud1, `carga$` o gerador de carga, `todas$` significa repetir em cada PC e `clusters$` em cada PC de cluster (fog1, fog2, cloud1 e, depois, fog3). Os hostnames são `pc-lamp-1` a `pc-lamp-6`, e os papéis são apelidos no `/etc/hosts` (tabela em [00](licoes/00-preparar-pcs-e-rede.md)).
 - **IPs**: cada PC tem um IP fixo no cabo, `192.168.0.11` (fog1), `.12` (fog2), `.13` (cloud1), `.14` (fog3), `.15` (carga) e `.16` (reserva). É o endereço que os guias originais chamam de `<PUBLIC_IP_OF_THE_VM>`. Se a faixa do switch mudar (00, passo 3), troque `192.168.0.` em todas as lições.
 - **Contextos Kubernetes**: cada cluster é administrado **a partir do seu próprio PC**. O KinD cria o contexto `kind-<cluster>` (ex.: `kind-fog1`) e o k3d, `k3d-fog3`. Para trocar informações entre clusters (secrets, certificados), copie arquivos via `scp`. A partir da lição do [gerador de carga](licoes/gerador-de-carga.md), o `carga` também administra todos.
-- **Origem das imagens**: a variável `IMAGE_SOURCE` escolhe entre `local` (imagens compiladas por nós, no GHCR) e `upstream` (imagens dos autores, no Docker Hub). Veja [M0](licoes/m0-build.md#origem-das-imagens-image_source).
+- **Origem das imagens**: a variável `IMAGE_SOURCE` escolhe entre `local` (imagens compiladas por nós, no GHCR da organização do grupo) e `upstream` (imagens dos autores, no Docker Hub). Veja [M0](licoes/m0-build.md#origem-das-imagens-image_source).
 - **Versões**: definidas no portão go/no-go do [M1](licoes/m1-clusters.md#portão-gono-go-de-versões) e registradas em [`decisoes.md`](decisoes.md).
 
 ## Como estudar cada lição

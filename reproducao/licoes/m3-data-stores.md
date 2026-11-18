@@ -146,7 +146,7 @@ A pasta precisa ter **o mesmo nome do `applicationId`** usado nos metadados (`hc
 
 O script `set-images.sh` faz essa troca. Ele lê a tag da imagem original (`samodha/dummy-microservice-test:hcm1` → `hcm1`; `samodha/microfog:latest` → CE), troca a linha `image:` pela referência por digest da origem escolhida e põe `imagePullPolicy: IfNotPresent`. Assim, uma republicação da tag não muda a imagem no meio dos experimentos, e os nós não baixam a imagem de novo a cada pod (D15). O mesmo script é usado no M4, nos manifestos do CE.
 
-`carga$` grave o script. Antes, preencha as linhas `local_` com os digests anotados no M0, passo 5. Se o build do M0 falhou, deixe-as como estão e use `upstream`:
+`carga$` grave o script. Antes, troque cada `PREENCHER` das linhas `local_` pela referência completa anotada no M0, passo 5 (`ghcr.io/<org>/...@sha256:...`). Se o build do M0 falhou, deixe-as como estão e use `upstream`:
 
 ```bash
 cat > ~/set-images.sh <<'SCRIPT'
@@ -166,14 +166,14 @@ declare -A upstream=(
   [a2m4]=samodha/dummy-microservice-test@sha256:d96418b90992cf69c1c2ebb037543ea3c7e42a06557f2e9574d8fbad2850f47a
 )
 declare -A local_=(
-  [ce]=ghcr.io/eduardor0cha/microfog@sha256:PREENCHER
-  [hcm1]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [hcm2]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [hcm3]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [a2m1]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [a2m2]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [a2m3]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
-  [a2m4]=ghcr.io/eduardor0cha/dummy-microservice@sha256:PREENCHER
+  [ce]=PREENCHER
+  [hcm1]=PREENCHER
+  [hcm2]=PREENCHER
+  [hcm3]=PREENCHER
+  [a2m1]=PREENCHER
+  [a2m2]=PREENCHER
+  [a2m3]=PREENCHER
+  [a2m4]=PREENCHER
 )
 
 for f in "$@"; do

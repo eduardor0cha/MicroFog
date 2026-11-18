@@ -38,19 +38,36 @@ Faça o build no PC `carga`, que não roda cluster e não disputa CPU com eles. 
 
 Os autores publicaram só as imagens prontas, no Docker Hub. Compilar as nossas a partir deste código garante que o que roda nos clusters é o código que estamos lendo, e as imagens dos autores ficam como alternativa (D15).
 
-### 1. Token do GHCR
+### 1. Organização e token do GHCR
 
-As imagens ficam no GHCR, o registry do GitHub, que não tem o limite de pulls do Docker Hub (D16). Para publicar nele, o Docker precisa de um token.
+As imagens ficam no GHCR, o registry do GitHub, que não tem o limite de pulls do Docker Hub, e numa **organização** do grupo, não numa conta pessoal (D16). Assim, o endereço das imagens não depende de ninguém, e cada membro publica com o próprio token.
 
-No GitHub: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages`. Copie o token gerado.
+**Uma vez só, por quem administra o grupo**, no GitHub:
 
-`carga$` o `read -s` lê o token sem mostrá-lo na tela nem gravá-lo no histórico do shell. Cole o token e tecle `Enter`:
+1. *+ → New organization → Free*. Use um nome **só com minúsculas**: o nome entra no endereço das imagens, e o Docker recusa maiúsculas.
+2. Na organização, *Settings → Packages → Package creation*: marque **Public**. Sem isso, os pacotes não podem ficar públicos (passo 4).
+3. *People → Invite member*: convide quem vai rodar o M0.
+
+**Cada pessoa que for publicar**, na própria conta: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages` e uma data de expiração. Copie o token gerado. Se a organização usar SSO, autorize o token nela (*Configure SSO*).
+
+`carga$` grave o nome da organização no `~/.bashrc`. Os comandos deste marco usam `$GHCR_ORG`, que assim continua definida em qualquer shell novo:
 
 ```bash
-read -s CR_PAT
-echo "$CR_PAT" | docker login ghcr.io -u eduardor0cha --password-stdin    # "Login Succeeded"
+echo 'export GHCR_ORG=nome-da-org' >> ~/.bashrc     # troque nome-da-org
+source ~/.bashrc
+echo "$GHCR_ORG"
+```
+
+`carga$` faça login com o **seu** usuário do GitHub. O `read -s` lê o token sem mostrá-lo na tela nem gravá-lo no histórico do shell. Digite o usuário, tecle `Enter`, cole o token e tecle `Enter`:
+
+```bash
+read -p "Usuário do GitHub: " GH_USER
+read -s -p "Token: " CR_PAT; echo
+echo "$CR_PAT" | docker login ghcr.io -u "$GH_USER" --password-stdin    # "Login Succeeded"
 unset CR_PAT
 ```
+
+O `docker login` grava o token em `~/.docker/config.json`, em base64, que não é criptografia. Enquanto ele estiver lá, quem usar esse usuário do `carga` publica em seu nome. Por isso, o passo 4 faz `docker logout` logo depois do push.
 
 ### 2. Build do CE
 
@@ -59,8 +76,8 @@ carga$ cd ~/MicroFog/ControlEngine
 carga$ docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
         maven:3.9-eclipse-temurin-17 mvn -B package -DskipTests
 carga$ TAG=src-$(git rev-parse --short HEAD)
-carga$ docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/eduardor0cha/microfog:$TAG .
-carga$ docker push ghcr.io/eduardor0cha/microfog:$TAG
+carga$ docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/$GHCR_ORG/microfog:$TAG .
+carga$ docker push ghcr.io/$GHCR_ORG/microfog:$TAG
 ```
 
 `-DskipTests` é necessário porque os testes em `src/test` precisam de um cluster e de Redis/MinIO rodando.
@@ -82,6 +99,7 @@ grep -h "name:" ../sample-deployment-resources/*/*-config.yaml
 cat > ~/build-dummies.sh <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
+: "${GHCR_ORG:?defina GHCR_ORG (M0, passo 1)}"
 cd ~/MicroFog/Workload_Generator/dummy-micro-java
 PROPS=src/main/resources/application.properties
 cp $PROPS /tmp/application.properties.orig
@@ -95,8 +113,8 @@ for pair in hcm1:hcapp hcm2:hcapp hcm3:hcapp a2m1:app2 a2m2:app2 a2m3:app2 a2m4:
              s/^(quarkus.kubernetes-config.config-maps=).*/\1$ms-config/" $PROPS
   docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
     maven:3.9-eclipse-temurin-17 mvn -B -q package -DskipTests
-  docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/eduardor0cha/dummy-microservice:$ms .
-  docker push ghcr.io/eduardor0cha/dummy-microservice:$ms
+  docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/$GHCR_ORG/dummy-microservice:$ms .
+  docker push ghcr.io/$GHCR_ORG/dummy-microservice:$ms
 done
 SCRIPT
 ```
@@ -112,13 +130,15 @@ Quando o script funcionar, guarde uma cópia em `reproducao/scripts/build-dummie
 
 ### 4. Tornar os pacotes públicos
 
-No GitHub: *Your profile → Packages → microfog → Package settings → Change visibility → Public*. Repita para `dummy-microservice`. Sem isso, os nós KinD precisariam de `imagePullSecrets`.
+O primeiro push cria cada pacote na organização como **privado**. No GitHub, na página da organização: *Packages → microfog → Package settings → Change visibility → Public*. Repita para `dummy-microservice`. Sem isso, os nós KinD precisariam de `imagePullSecrets`. A opção só aparece se a organização permitir pacotes públicos (passo 1).
+
+Na mesma página, em *Manage access*, dê o papel **Write** aos membros (ou a um time) que também vão publicar. Por padrão, só quem fez o primeiro push e os donos da organização podem publicar novas versões.
 
 Confira sem login. O `docker logout` simula um nó do KinD, que não tem credenciais:
 
 ```bash
 carga$ docker logout ghcr.io
-carga$ docker pull ghcr.io/eduardor0cha/dummy-microservice:hcm1    # deve baixar sem "denied"
+carga$ docker pull ghcr.io/$GHCR_ORG/dummy-microservice:hcm1    # deve baixar sem "denied"
 ```
 
 ### 5. Registrar os digests
@@ -129,13 +149,13 @@ O digest identifica o conteúdo da imagem. Os manifestos usam o digest, e não a
 
 ```bash
 cd ~/MicroFog/ControlEngine && TAG=src-$(git rev-parse --short HEAD)
-docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/microfog:$TAG
+docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/$GHCR_ORG/microfog:$TAG
 for ms in hcm1 hcm2 hcm3 a2m1 a2m2 a2m3 a2m4; do
-  echo "$ms $(docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/eduardor0cha/dummy-microservice:$ms)"
+  echo "$ms $(docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/$GHCR_ORG/dummy-microservice:$ms)"
 done
 ```
 
-Anote os digests na tabela abaixo.
+Cada linha impressa é a referência completa, já com a organização e o digest (`ghcr.io/<org>/microfog@sha256:...`). Anote-as na tabela abaixo: o M3 usa essas linhas como estão.
 
 ## Origem das imagens (`IMAGE_SOURCE`)
 
@@ -143,8 +163,8 @@ Os manifestos do repositório usam `samodha/...:latest` com `imagePullPolicy: Al
 
 | Imagem | `upstream` (autores, Docker Hub, digests de 2026-11-02) | `local` (nossa, GHCR) |
 |---|---|---|
-| CE | `samodha/microfog@sha256:b6342ae19edfd854d3102564cc6e7da65369c45cebbf459f900811607adb93c2` | `ghcr.io/eduardor0cha/microfog@sha256:…` |
-| hcm1 | `samodha/dummy-microservice-test@sha256:ab602dab1e525d2df7d4a1e2a13bd65abc35082f50edd938e419edb1d2977a36` | `ghcr.io/eduardor0cha/dummy-microservice@sha256:…` |
+| CE | `samodha/microfog@sha256:b6342ae19edfd854d3102564cc6e7da65369c45cebbf459f900811607adb93c2` | `ghcr.io/<org>/microfog@sha256:…` |
+| hcm1 | `samodha/dummy-microservice-test@sha256:ab602dab1e525d2df7d4a1e2a13bd65abc35082f50edd938e419edb1d2977a36` | `ghcr.io/<org>/dummy-microservice@sha256:…` |
 | hcm2 | `samodha/dummy-microservice-test@sha256:d81db14c03cae3ffbf3c01dfbd75f7d3cf5dca9c4cb99c6022adf41dddd8389b` | … |
 | hcm3 | `samodha/dummy-microservice-test@sha256:071e1c1d50a62bf2d2b1e5b0ae2eec8dd6ae62513765ac38c80ac56c47904a6e` | … |
 | a2m1 | `samodha/dummy-microservice-test@sha256:b7f74d3dfe4901adf1617875da29e9862bfcfa26b6ced43dc2e8c7a42014497a` | … |
@@ -161,7 +181,7 @@ O script `~/set-images.sh`, escrito no [M3, passo 4](m3-data-stores.md#4-upload-
 ## O que observar
 
 - O `mvn package` termina com `BUILD SUCCESS` e gera `target/quarkus-app/`.
-- As imagens aparecem em `https://github.com/eduardor0cha?tab=packages`.
+- As imagens aparecem em `https://github.com/orgs/<org>/packages`.
 
 Se o build falhar por causa de dependências de 2022, **não pare o plano**: siga com `IMAGE_SOURCE=upstream` e volte ao build depois (decisão D15).
 
@@ -177,6 +197,8 @@ Se o build falhar por causa de dependências de 2022, **não pare o plano**: sig
 |---|---|---|
 | `Could not resolve dependencies` | Artefato de 2022 removido de um repositório Maven | Veja qual artefato e procure a versão mais próxima. Registre a mudança |
 | `denied: permission_denied` no push | Token sem `write:packages` | Gere outro token |
+| `denied` no push com o token certo | Você não é membro da organização, ou não tem **Write** no pacote | Passo 1 (convite) e passo 4 (*Manage access*) |
+| `invalid reference format` no build | `GHCR_ORG` vazia, ou com maiúsculas | `echo "$GHCR_ORG"`; passo 1 |
 | Pod depois em `ErrImagePull` | Pacote ainda privado no GHCR | Passo 4 |
 
 ## Registro de execução
@@ -184,5 +206,6 @@ Se o build falhar por causa de dependências de 2022, **não pare o plano**: sig
 - Data:
 - Commit do repositório (`git rev-parse HEAD`):
 - Build do CE: sucesso / falhou (motivo):
+- Organização (`GHCR_ORG`):
 - Digests gerados:
 - Desvios do plano:
