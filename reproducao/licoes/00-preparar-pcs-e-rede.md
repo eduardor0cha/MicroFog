@@ -388,10 +388,10 @@ sudo install -m 0755 mc /usr/local/bin/mc && rm mc
 mc --version
 ```
 
-Clone o repositório em cada PC. Os manifestos e os metadados das aplicações usados nas lições estão nele:
+Clone o repositório em cada PC. Os manifestos e os metadados das aplicações usados nas lições estão nele. O clone vem do fork do grupo, e não do repositório dos autores, para que os PCs recebam as mudanças feitas aqui:
 
 ```bash
-git clone https://github.com/Cloudslab/MicroFog.git ~/MicroFog
+git clone https://github.com/pesquisa-lamp/MicroFog.git ~/MicroFog
 ```
 
 ## O que observar
