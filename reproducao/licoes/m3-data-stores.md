@@ -146,7 +146,7 @@ A pasta precisa ter **o mesmo nome do `applicationId`** usado nos metadados (`hc
 
 O script `set-images.sh` faz essa troca. Ele lê a tag da imagem original (`samodha/dummy-microservice-test:hcm1` → `hcm1`; `samodha/microfog:latest` → CE), troca a linha `image:` pela referência por digest da origem escolhida e põe `imagePullPolicy: IfNotPresent`. Assim, uma republicação da tag não muda a imagem no meio dos experimentos, e os nós não baixam a imagem de novo a cada pod (D15). O mesmo script é usado no M4, nos manifestos do CE.
 
-`carga$` (pc-lamp-5) grave o script. Antes, troque cada `PREENCHER` das linhas `local_` pela referência completa anotada no M0, passo 5 (`ghcr.io/<org>/...@sha256:...`). Se o build do M0 falhou, deixe-as como estão e use `upstream`:
+`carga$` (pc-lamp-5) grave o script. As linhas `local_` já têm os digests do build de 2026-11-18 (M0, passo 5). Se você refizer o build, troque-as pelas referências novas:
 
 ```bash
 cat > ~/set-images.sh <<'SCRIPT'
@@ -166,14 +166,14 @@ declare -A upstream=(
   [a2m4]=samodha/dummy-microservice-test@sha256:d96418b90992cf69c1c2ebb037543ea3c7e42a06557f2e9574d8fbad2850f47a
 )
 declare -A local_=(
-  [ce]=PREENCHER
-  [hcm1]=PREENCHER
-  [hcm2]=PREENCHER
-  [hcm3]=PREENCHER
-  [a2m1]=PREENCHER
-  [a2m2]=PREENCHER
-  [a2m3]=PREENCHER
-  [a2m4]=PREENCHER
+  [ce]=ghcr.io/pesquisa-lamp/microfog@sha256:5a5cac92f3e2bdf41afb9684cb6a5e8c096d6b4fdbacede1b5c6b2da9ba19eae
+  [hcm1]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:25744b6146138a791e8f29618e2e2c1e732d7c3ad7be0bef1826b4888caedd9e
+  [hcm2]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:15c0394a873cbb9c0d0d0742d749f6574415370af6de038a9328819fc09daaa3
+  [hcm3]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:91e706fea9a988cae5e2f7a737918b20c9e15e703834a59a2e39eb680d1c3f7e
+  [a2m1]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:36961075dc63cf3b238a9a871c8a8289f99cf7f867fa3bcbbfed951c70a83e06
+  [a2m2]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:78427d55b0ab6373aa8b4592377dbc602453fdd42f15a1255bade52c36833ad0
+  [a2m3]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:1242993f7b8426a127cc6be6c84f7a26291e5356ae54b68138304c375e9195fd
+  [a2m4]=ghcr.io/pesquisa-lamp/dummy-microservice@sha256:6969eb5acb0f82bb12c0579bab874be68b2ead207dfdfd47a48b40738fafd551
 )
 
 for f in "$@"; do

@@ -77,12 +77,14 @@ O `docker login` grava o token em `~/.docker/config.json`, em base64, que não �
 cd ~/MicroFog/ControlEngine
 docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
   maven:3.9-eclipse-temurin-17 mvn -B package -DskipTests
-TAG=src-$(git rev-parse --short HEAD)
+TAG=src-$(git log -1 --format=%h -- .)
 docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/$GHCR_ORG/microfog:$TAG .
 docker push ghcr.io/$GHCR_ORG/microfog:$TAG
 ```
 
 `-DskipTests` é necessário porque os testes em `src/test` precisam de um cluster e de Redis/MinIO rodando.
+
+A tag vem do último commit que mexeu em `ControlEngine/`, e não do `HEAD` do repositório. Assim, ela só muda quando o código do CE muda, e não a cada commit da documentação.
 
 ### 3. Build dos microserviços de teste
 
@@ -128,7 +130,7 @@ bash ~/build-dummies.sh
 cd ~/MicroFog && git status --short     # não deve listar o application.properties
 ```
 
-Quando o script funcionar, guarde uma cópia em `reproducao/scripts/build-dummies.sh`, neste repositório.
+Uma cópia do script, como rodou no pc-lamp-5, está em `reproducao/scripts/build-dummies.sh`. Se mudar o script, atualize também essa cópia.
 
 ### 4. Tornar os pacotes públicos
 
@@ -147,10 +149,10 @@ docker pull ghcr.io/$GHCR_ORG/dummy-microservice:hcm1    # deve baixar sem "deni
 
 O digest identifica o conteúdo da imagem. Os manifestos usam o digest, e não a tag, para que uma republicação da tag não troque a imagem no meio dos experimentos (D15).
 
-`carga$` (pc-lamp-5) liste os digests. O `TAG` do passo 2 se perde quando você abre outro shell, por isso o primeiro comando o recria:
+`carga$` (pc-lamp-5) liste os digests. O `TAG` do passo 2 se perde quando você abre outro shell, por isso o primeiro comando o recria. Se o `docker inspect` disser `no such object`, a imagem foi construída com outra tag; veja qual com `docker images ghcr.io/$GHCR_ORG/microfog` e use-a no lugar de `$TAG`:
 
 ```bash
-cd ~/MicroFog/ControlEngine && TAG=src-$(git rev-parse --short HEAD)
+cd ~/MicroFog/ControlEngine && TAG=src-$(git log -1 --format=%h -- .)
 docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/$GHCR_ORG/microfog:$TAG
 for ms in hcm1 hcm2 hcm3 a2m1 a2m2 a2m3 a2m4; do
   echo "$ms $(docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/$GHCR_ORG/dummy-microservice:$ms)"
@@ -163,16 +165,16 @@ Cada linha impressa é a referência completa, já com a organização e o diges
 
 Os manifestos do repositório usam `samodha/...:latest` com `imagePullPolicy: Always`. Vamos trocar ambos: a imagem passa a ser escolhida por `IMAGE_SOURCE` e é sempre fixada por **digest**, com `imagePullPolicy: IfNotPresent`.
 
-| Imagem | `upstream` (autores, Docker Hub, digests de 2026-11-02) | `local` (nossa, GHCR) |
+| Imagem | `upstream` (autores, Docker Hub, digests de 2026-11-02) | `local` (nossa, GHCR, digests de 2026-11-18) |
 |---|---|---|
-| CE | `samodha/microfog@sha256:b6342ae19edfd854d3102564cc6e7da65369c45cebbf459f900811607adb93c2` | `ghcr.io/<org>/microfog@sha256:…` |
-| hcm1 | `samodha/dummy-microservice-test@sha256:ab602dab1e525d2df7d4a1e2a13bd65abc35082f50edd938e419edb1d2977a36` | `ghcr.io/<org>/dummy-microservice@sha256:…` |
-| hcm2 | `samodha/dummy-microservice-test@sha256:d81db14c03cae3ffbf3c01dfbd75f7d3cf5dca9c4cb99c6022adf41dddd8389b` | … |
-| hcm3 | `samodha/dummy-microservice-test@sha256:071e1c1d50a62bf2d2b1e5b0ae2eec8dd6ae62513765ac38c80ac56c47904a6e` | … |
-| a2m1 | `samodha/dummy-microservice-test@sha256:b7f74d3dfe4901adf1617875da29e9862bfcfa26b6ced43dc2e8c7a42014497a` | … |
-| a2m2 | `samodha/dummy-microservice-test@sha256:fac0e64e3c067341d764153fbe797de2892ff6c3742cc778489e733b90730ecf` | … |
-| a2m3 | `samodha/dummy-microservice-test@sha256:0a7c1c205828cb1c6151a9ea118c76ba7f3b96250966e131e05827c4954e8af5` | … |
-| a2m4 | `samodha/dummy-microservice-test@sha256:d96418b90992cf69c1c2ebb037543ea3c7e42a06557f2e9574d8fbad2850f47a` | … |
+| CE | `samodha/microfog@sha256:b6342ae19edfd854d3102564cc6e7da65369c45cebbf459f900811607adb93c2` | `ghcr.io/pesquisa-lamp/microfog@sha256:5a5cac92f3e2bdf41afb9684cb6a5e8c096d6b4fdbacede1b5c6b2da9ba19eae` |
+| hcm1 | `samodha/dummy-microservice-test@sha256:ab602dab1e525d2df7d4a1e2a13bd65abc35082f50edd938e419edb1d2977a36` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:25744b6146138a791e8f29618e2e2c1e732d7c3ad7be0bef1826b4888caedd9e` |
+| hcm2 | `samodha/dummy-microservice-test@sha256:d81db14c03cae3ffbf3c01dfbd75f7d3cf5dca9c4cb99c6022adf41dddd8389b` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:15c0394a873cbb9c0d0d0742d749f6574415370af6de038a9328819fc09daaa3` |
+| hcm3 | `samodha/dummy-microservice-test@sha256:071e1c1d50a62bf2d2b1e5b0ae2eec8dd6ae62513765ac38c80ac56c47904a6e` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:91e706fea9a988cae5e2f7a737918b20c9e15e703834a59a2e39eb680d1c3f7e` |
+| a2m1 | `samodha/dummy-microservice-test@sha256:b7f74d3dfe4901adf1617875da29e9862bfcfa26b6ced43dc2e8c7a42014497a` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:36961075dc63cf3b238a9a871c8a8289f99cf7f867fa3bcbbfed951c70a83e06` |
+| a2m2 | `samodha/dummy-microservice-test@sha256:fac0e64e3c067341d764153fbe797de2892ff6c3742cc778489e733b90730ecf` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:78427d55b0ab6373aa8b4592377dbc602453fdd42f15a1255bade52c36833ad0` |
+| a2m3 | `samodha/dummy-microservice-test@sha256:0a7c1c205828cb1c6151a9ea118c76ba7f3b96250966e131e05827c4954e8af5` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:1242993f7b8426a127cc6be6c84f7a26291e5356ae54b68138304c375e9195fd` |
+| a2m4 | `samodha/dummy-microservice-test@sha256:d96418b90992cf69c1c2ebb037543ea3c7e42a06557f2e9574d8fbad2850f47a` | `ghcr.io/pesquisa-lamp/dummy-microservice@sha256:6969eb5acb0f82bb12c0579bab874be68b2ead207dfdfd47a48b40738fafd551` |
 
 A tag `samodha/microfog:latest` foi publicada em 2023-02-10, um dia depois do último commit do código do CE (2023-02-09). É provável, mas não garantido, que corresponda a este código.
 
@@ -206,9 +208,9 @@ Se o build falhar por causa de dependências de 2022, **não pare o plano**: sig
 
 ## Registro de execução
 
-- Data:
-- Commit do repositório (`git rev-parse HEAD`):
-- Build do CE: sucesso / falhou (motivo):
-- Organização (`GHCR_ORG`):
-- Digests gerados:
-- Desvios do plano:
+- Data: 2026-11-18
+- Commit do repositório (`git rev-parse HEAD`): CE construído no clone dos autores (`225d1e4`, tag `src-225d1e4`); o código de `ControlEngine/` é igual ao do fork (`ba5b340`)
+- Build do CE: sucesso
+- Organização (`GHCR_ORG`): `pesquisa-lamp`
+- Digests gerados: tabela em [Origem das imagens](#origem-das-imagens-image_source)
+- Desvios do plano: o primeiro push de `dummy-microservice` deu `denied` ao criar o pacote e passou ao repetir (ver *Problemas comuns*). O `docker pull` sem login do passo 4 deu `unauthorized`: os pacotes ainda estavam privados
