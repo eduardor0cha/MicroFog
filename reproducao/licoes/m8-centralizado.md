@@ -34,15 +34,15 @@ Com `primary = false`, o `addPR` responde `Operation not supported in Central Mo
 
 ### 1. Apagar as aplicações
 
-Apague as aplicações dos marcos anteriores. O `--ignore-not-found` evita erro onde o namespace não existe:
+`clusters$` (pc-lamp-1 a 4) apague as aplicações dos marcos anteriores. O `--ignore-not-found` evita erro onde o namespace não existe:
 
 ```bash
-clusters$ kubectl delete ns hcapp app2 --ignore-not-found
+kubectl delete ns hcapp app2 --ignore-not-found
 ```
 
 ### 2. Guardar os ConfigMaps do modo distribuído
 
-Os ConfigMaps do M4–M6 voltam a ser usados depois. `clusters$` (troque `C` conforme o PC: `fog1`, `fog2`, `fog3` ou `cloud1`):
+Os ConfigMaps do M4–M6 voltam a ser usados depois. `clusters$` (pc-lamp-1 a 4), trocando `C` conforme o PC (`fog1`, `fog2`, `fog3` ou `cloud1`):
 
 ```bash
 C=fog1
@@ -51,7 +51,7 @@ cp ~/ce/controller-configmap-$C.yaml ~/ce/controller-configmap-$C-distribuido.ya
 
 ### 3. Atualizar os ConfigMaps
 
-`fog1$`, `fog2$` e `fog3$`: modo centralizado, sem aceitar PRs e sem load balancing:
+`fog1$` (pc-lamp-1), `fog2$` (pc-lamp-2) e `fog3$` (pc-lamp-4): modo centralizado, sem aceitar PRs e sem load balancing:
 
 ```bash
 C=fog1
@@ -62,7 +62,7 @@ sed -i -E 's/(operationmode\.distributed\s*=\s*)true/\1false/;
 grep -E "operationmode|loadblancing.enabled" $F
 ```
 
-`cloud1$`: primário, com o V3, sem load balancing, e com **todos** os fogs como vizinhos. Depois do [fog3](fog3-k3d.md), o ConfigMap do cloud1 já lista `fog1`, `fog2` e `fog3`:
+`cloud1$` (pc-lamp-3): primário, com o V3, sem load balancing, e com **todos** os fogs como vizinhos. Depois do [fog3](fog3-k3d.md), o ConfigMap do cloud1 já lista `fog1`, `fog2` e `fog3`:
 
 ```bash
 F=~/ce/controller-configmap-cloud1.yaml
@@ -78,7 +78,7 @@ Confira na saída que os valores batem com a tabela de configuração acima.
 
 O CE só lê o ConfigMap ao iniciar. Comece pelos fogs e termine pelo cloud1, para que o primário já encontre os outros CEs no modo novo.
 
-`fog1$`, `fog2$` e `fog3$`, depois `cloud1$` (troque `C`):
+`fog1$` (pc-lamp-1), `fog2$` (pc-lamp-2) e `fog3$` (pc-lamp-4), depois `cloud1$` (pc-lamp-3), trocando `C`:
 
 ```bash
 C=fog1
@@ -90,7 +90,7 @@ kubectl -n control-engine wait --for=condition=Ready pod/controller-$C --timeout
 
 ### 5. Confirmar que um fog recusa PRs
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -102,16 +102,33 @@ Esperado: `Operation not supported in Central Mode`.
 
 ### 6. Submeter ao cloud1
 
-Abra antes os logs dos quatro CEs, um terminal por PC (`Ctrl+C` encerra):
+Abra antes os logs dos quatro CEs, um terminal por PC (`Ctrl+C` encerra).
+
+`fog1$` (pc-lamp-1):
 
 ```bash
-fog1$   kubectl -n control-engine logs -f controller-fog1   -c controller-fog1
-fog2$   kubectl -n control-engine logs -f controller-fog2   -c controller-fog2
-fog3$   kubectl -n control-engine logs -f controller-fog3   -c controller-fog3
-cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
+kubectl -n control-engine logs -f controller-fog1 -c controller-fog1
 ```
 
-`carga$` submeta o mesmo PR ao **cloud1**. Mantenha `entryClusters: ["fog1"]`: o placement começa pelo fog1, mesmo sendo decidido no cloud1:
+`fog2$` (pc-lamp-2):
+
+```bash
+kubectl -n control-engine logs -f controller-fog2 -c controller-fog2
+```
+
+`fog3$` (pc-lamp-4):
+
+```bash
+kubectl -n control-engine logs -f controller-fog3 -c controller-fog3
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
+```
+
+`carga$` (pc-lamp-5) submeta o mesmo PR ao **cloud1**. Mantenha `entryClusters: ["fog1"]`: o placement começa pelo fog1, mesmo sendo decidido no cloud1:
 
 ```bash
 curl -s -H "$H" -H "cluster: cloud1" -H 'Content-Type: application/json' \
@@ -122,7 +139,7 @@ No primário, procure `RETRIEVE_OTHER_CLUSTER_DATA_BEGIN/END` e `DEPLOY_COMMANDS
 
 ### 7. Chamar a aplicação
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
@@ -131,7 +148,7 @@ curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/jso
 
 ### 8. Voltar ao modo distribuído
 
-`clusters$` restaure os ConfigMaps do passo 2 e reinicie os CEs como no passo 4, de novo com os fogs primeiro:
+`clusters$` (pc-lamp-1 a 4) restaure os ConfigMaps do passo 2 e reinicie os CEs como no passo 4, de novo com os fogs primeiro:
 
 ```bash
 C=fog1

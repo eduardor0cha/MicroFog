@@ -26,19 +26,21 @@ O `tc netem` (Linux) atrasa, perde ou limita os pacotes que **saem** por uma int
 
 ### 1. Medir antes
 
+`fog1$` (pc-lamp-1) meça o RTT até o cloud1 e, como referência, até o fog2:
+
 ```bash
-fog1$ ping -c 20 192.168.0.13 | tail -1     # RTT fog1 → cloud1, sem emulação
-fog1$ ping -c 20 192.168.0.12 | tail -1     # RTT fog1 → fog2 (referência)
+ping -c 20 192.168.0.13 | tail -1     # RTT fog1 → cloud1, sem emulação
+ping -c 20 192.168.0.12 | tail -1     # RTT fog1 → fog2 (referência)
 ```
 
 ### 2. Aplicar no cloud1
 
-Aplicando o atraso **só na saída** do cabo do cloud1, o RTT de qualquer conversa com o cloud1 aumenta pelo valor configurado (as respostas saem atrasadas):
+`cloud1$` (pc-lamp-3) aplicando o atraso **só na saída** do cabo do cloud1, o RTT de qualquer conversa com o cloud1 aumenta pelo valor configurado (as respostas saem atrasadas):
 
 ```bash
-cloud1$ IF=eno1                                   # a interface do CABO, não a da Wi-Fi
-cloud1$ sudo tc qdisc add dev $IF root netem delay 50ms 5ms distribution normal rate 100mbit
-cloud1$ tc qdisc show dev $IF
+IF=eno1                                   # a interface do CABO, não a da Wi-Fi
+sudo tc qdisc add dev $IF root netem delay 50ms 5ms distribution normal rate 100mbit
+tc qdisc show dev $IF
 ```
 
 - `delay 50ms 5ms distribution normal`: 50 ms em média, com variação (jitter) de 5 ms.
@@ -50,22 +52,24 @@ Para dividir o atraso entre ida e volta, aplique metade aqui e metade na **entra
 
 ### 3. Medir depois
 
+`fog1$` (pc-lamp-1) repita as medidas:
+
 ```bash
-fog1$ ping -c 20 192.168.0.13 | tail -1     # deve subir ~50 ms
-fog1$ ping -c 20 192.168.0.12 | tail -1     # deve ficar igual
+ping -c 20 192.168.0.13 | tail -1     # deve subir ~50 ms
+ping -c 20 192.168.0.12 | tail -1     # deve ficar igual
 ```
 
 ### 4. Refazer o M6 com a WAN
 
-Com a regra ativa, apague o `app2`:
+`clusters$` (pc-lamp-1 a 3) com a regra ativa, apague o `app2`:
 
 ```bash
-clusters$ kubectl delete ns app2
+kubectl delete ns app2
 ```
 
 Repita os passos 2–5 do [M6](m6-placement-distribuido.md), com FP1 (`to_rand_fog`) e com FP2 (`to_cloud`). Em cada política, meça a latência do `curl` do passo 4 do M6 em 10 repetições. O `-w '%{time_total}'` imprime o tempo total da requisição, em segundos:
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 for i in $(seq 10); do
@@ -79,9 +83,11 @@ Compare com a do M6 sem WAN, medida da mesma forma (remova a regra no passo 5, r
 
 ### 5. Remover
 
+`cloud1$` (pc-lamp-3) remova a regra:
+
 ```bash
-cloud1$ sudo tc qdisc del dev eno1 root
-cloud1$ tc qdisc show dev eno1        # volta a mostrar a fila padrão (fq_codel ou similar), sem netem
+sudo tc qdisc del dev eno1 root
+tc qdisc show dev eno1        # volta a mostrar a fila padrão (fq_codel ou similar), sem netem
 ```
 
 A regra **não sobrevive a um reboot**. Isso é bom num laboratório, porque não fica esquecida. Registre o comando usado em cada experimento.

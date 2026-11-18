@@ -49,7 +49,7 @@ Decisão D13: tentar primeiro as versões da época do artigo.
 | MetalLB | v0.13.7 | a última versão estável |
 | metrics-server | v0.6.4 | a última versão estável |
 
-`fog1$` Teste, em até ~30 minutos:
+`fog1$` (pc-lamp-1) teste, em até ~30 minutos:
 
 ```bash
 # kind v0.14.0
@@ -72,7 +72,7 @@ kind delete cluster --name gate
 
 O portão existe porque o artigo usou versões de 2022, e um kernel de 2026 com cgroup v2 pode não rodar a imagem antiga do nó. O teste curto no fog1 decide a versão antes de qualquer configuração ser feita em cima dela.
 
-`todas$` (PCs 1–5) instale a mesma versão de `kind` e `istioctl` em todos. Com NO-GO, troque as duas versões pelas do fallback, anotadas em `decisoes.md`:
+`todas$` (pc-lamp-1 a 5) instale a mesma versão de `kind` e `istioctl` em todos. Com NO-GO, troque as duas versões pelas do fallback, anotadas em `decisoes.md`:
 
 ```bash
 KIND_VERSION=v0.14.0
@@ -116,11 +116,11 @@ Restrições:
 
 ### Do alvo ao `system-reserved`
 
-O nó KinD enxerga a capacidade do PC inteiro, que você lê no próprio host:
+O nó KinD enxerga a capacidade do PC inteiro, que você lê no próprio host. `fog1$` (pc-lamp-1):
 
 ```bash
-fog1$ nproc                                                     # 4
-fog1$ awk '/MemTotal/ {printf "%d Mi\n", $2/1024}' /proc/meminfo
+nproc                                                     # 4
+awk '/MemTotal/ {printf "%d Mi\n", $2/1024}' /proc/meminfo
 ```
 
 ```
@@ -154,7 +154,7 @@ Cada PC guarda a configuração do seu cluster em `~/clusters/`. É essa pasta q
 
 O arquivo de cada cluster parte do original em `Prototype_Setup/cluster-setup/<cluster>/kindClusterConfig-<cluster>.yaml`, com a mesma estrutura e as reservas da tabela acima. Com NO-GO, troque a linha `image:` de todos os nós pela imagem do fallback.
 
-`fog1$`:
+`fog1$` (pc-lamp-1):
 
 ```bash
 mkdir -p ~/clusters
@@ -233,7 +233,7 @@ kubeadmConfigPatches:
 EOF
 ```
 
-`fog2$` (5 nós; portas e rótulos `istioingress`/`istioeastwest` no **primeiro worker**):
+`fog2$` (pc-lamp-2), com 5 nós e as portas e os rótulos `istioingress`/`istioeastwest` no **primeiro worker**:
 
 ```bash
 mkdir -p ~/clusters
@@ -321,7 +321,7 @@ kubeadmConfigPatches:
 EOF
 ```
 
-`cloud1$` (2 nós; `region: cloud`; portas e rótulos no worker):
+`cloud1$` (pc-lamp-3), com 2 nós, `region: cloud` e as portas e os rótulos no worker:
 
 ```bash
 mkdir -p ~/clusters
@@ -386,7 +386,7 @@ Diferenças em relação ao original e por quê:
 - Removemos os `extraMounts` (`./data_*`): não são usados pelo CE e exigiriam diretórios no host.
 - No original, o patch `enable-aggregator-routing` estava repetido em cada worker, onde não tem efeito (`ClusterConfiguration` só vale para o control-plane). Aqui ele aparece uma vez, no nível do cluster.
 
-`clusters$` crie o cluster (`fog1`, `fog2` ou `cloud1`, conforme o PC):
+`clusters$` (pc-lamp-1 a 3) crie o cluster (`fog1`, `fog2` ou `cloud1`, conforme o PC):
 
 ```bash
 C=fog1
@@ -400,7 +400,7 @@ O KinD usa a rede Docker `kind` criada no [00](00-preparar-pcs-e-rede.md), passo
 
 No M2, os outros clusters vão acessar o API server deste cluster em `https://192.168.0.11:6443`, passando pelo gateway do Istio. O certificado do API server precisa incluir esse IP, ou a conexão TLS é recusada.
 
-`clusters$` (em cada PC, só para o próprio cluster):
+`clusters$` (pc-lamp-1 a 3), cada PC só para o próprio cluster:
 
 | PC | `CP` | `IP` |
 |---|---|---|
@@ -456,7 +456,7 @@ docker restart $CP
 
 O CE usa o uso real dos nós (`kubectl top`), além do allocatable.
 
-`clusters$` (fog1, fog2 e cloud1):
+`clusters$` (pc-lamp-1 a 3):
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.6.4/components.yaml
@@ -469,7 +469,7 @@ kubectl top nodes       # aguarde ~1 min
 
 ### 4. MetalLB
 
-`clusters$` (troque `C` e `IP` conforme o PC: `fog1`/`192.168.0.11`, `fog2`/`192.168.0.12`, `cloud1`/`192.168.0.13`):
+`clusters$` (pc-lamp-1 a 3), trocando `C` e `IP` conforme o PC (`fog1`/`192.168.0.11`, `fog2`/`192.168.0.12`, `cloud1`/`192.168.0.13`):
 
 ```bash
 C=fog1
@@ -486,7 +486,7 @@ O pool tem duas partes: uma faixa dentro da rede Docker `kind` (no original, `17
 
 ### 5. Guardar a configuração
 
-`carga$` copie os arquivos de cada PC (ponto de retorno; veja o [README](../README.md#pontos-de-retorno)):
+`carga$` (pc-lamp-5) copie os arquivos de cada PC (ponto de retorno; veja o [README](../README.md#pontos-de-retorno)):
 
 ```bash
 for h in fog1 fog2 cloud1; do mkdir -p ~/backup/$h && scp -r $h:clusters ~/backup/$h/; done

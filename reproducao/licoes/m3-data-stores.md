@@ -48,7 +48,7 @@ Os manifestos usam `quay.io/minio/minio:latest` e `redis` (sem tag). Em 2026, `l
 
 O `mc` (cliente) da mesma época foi instalado no [00](00-preparar-pcs-e-rede.md), passo 8.
 
-`clusters$` faça a troca em cópias dos manifestos, em `~/stores/`, e não nos originais. Assim o `git status` do clone continua limpo, e os originais servem de referência:
+`clusters$` (pc-lamp-1 a 3) faça a troca em cópias dos manifestos, em `~/stores/`, e não nos originais. Assim o `git status` do clone continua limpo, e os originais servem de referência:
 
 ```bash
 mkdir -p ~/stores
@@ -69,7 +69,7 @@ docker pull redis:7.0
 
 O sidecar é o que põe os stores na malha: sem ele, o failover por localidade e a replicação entre clusters não funcionam.
 
-`clusters$`
+`clusters$` (pc-lamp-1 a 3) crie o namespace com injeção de sidecar:
 
 ```bash
 kubectl create ns control-engine
@@ -78,7 +78,7 @@ kubectl label ns control-engine istio-injection=enabled
 
 ### 2. MinIO
 
-`clusters$` (troque `C` conforme o PC: `fog1`, `fog2` ou `cloud1`):
+`clusters$` (pc-lamp-1 a 3), trocando `C` conforme o PC (`fog1`, `fog2` ou `cloud1`):
 
 ```bash
 C=fog1
@@ -96,7 +96,7 @@ kubectl -n $N wait --for=condition=Ready pod/minio-$C --timeout=300s
 
 **Desvio do guia original:** não aplicamos `minioGW.yaml` nem `minioVS_*.yaml`, que expõem o console do MinIO na porta 80 do ingress. Essa porta também é usada pelos gateways do CE e das aplicações (hosts `"*"`), e as rotas podem entrar em conflito. Em vez disso, acesse o MinIO por `kubectl port-forward`, que liga uma porta do PC ao Service dentro do cluster.
 
-`clusters$` num **terminal separado**, que fica ocupado enquanto o port-forward estiver ativo (`Ctrl+C` encerra):
+`clusters$` (pc-lamp-1 a 3) num **terminal separado**, que fica ocupado enquanto o port-forward estiver ativo (`Ctrl+C` encerra):
 
 ```bash
 C=fog1
@@ -113,7 +113,7 @@ ssh -L 9090:localhost:9090 <usuário>@192.168.0.11
 
 A replicação só funciona entre buckets que já existem e têm versionamento. Por isso, crie o bucket **nos três clusters** antes de configurar a replicação em qualquer um.
 
-`clusters$` no terminal principal, com o port-forward ativo no outro:
+`clusters$` (pc-lamp-1 a 3) no terminal principal, com o port-forward ativo no outro:
 
 ```bash
 C=fog1
@@ -125,7 +125,7 @@ mc version info $C/microfog-app-metadata     # "versioning is enabled"
 
 A replicação **ativa-ativa** entre os três é configurada servidor a servidor: cada um replica para os outros dois. Os endereços são os nomes internos dos Services de gerenciamento, que cada servidor alcança pela malha.
 
-`clusters$` depois que os três buckets existirem (o laço pula o próprio cluster):
+`clusters$` (pc-lamp-1 a 3) depois que os três buckets existirem (o laço pula o próprio cluster):
 
 ```bash
 C=fog1
@@ -146,7 +146,7 @@ A pasta precisa ter **o mesmo nome do `applicationId`** usado nos metadados (`hc
 
 O script `set-images.sh` faz essa troca. Ele lê a tag da imagem original (`samodha/dummy-microservice-test:hcm1` → `hcm1`; `samodha/microfog:latest` → CE), troca a linha `image:` pela referência por digest da origem escolhida e põe `imagePullPolicy: IfNotPresent`. Assim, uma republicação da tag não muda a imagem no meio dos experimentos, e os nós não baixam a imagem de novo a cada pod (D15). O mesmo script é usado no M4, nos manifestos do CE.
 
-`carga$` grave o script. Antes, troque cada `PREENCHER` das linhas `local_` pela referência completa anotada no M0, passo 5 (`ghcr.io/<org>/...@sha256:...`). Se o build do M0 falhou, deixe-as como estão e use `upstream`:
+`carga$` (pc-lamp-5) grave o script. Antes, troque cada `PREENCHER` das linhas `local_` pela referência completa anotada no M0, passo 5 (`ghcr.io/<org>/...@sha256:...`). Se o build do M0 falhou, deixe-as como estão e use `upstream`:
 
 ```bash
 cat > ~/set-images.sh <<'SCRIPT'
@@ -198,7 +198,7 @@ chmod +x ~/set-images.sh
 for h in fog1 fog2 cloud1 fog3; do scp ~/set-images.sh $h:; done
 ```
 
-`fog1$` copie os YAMLs, troque as imagens e envie ao MinIO. `IMAGE_SOURCE=local` é o padrão (D15); use `upstream` para as imagens dos autores:
+`fog1$` (pc-lamp-1) copie os YAMLs, troque as imagens e envie ao MinIO. `IMAGE_SOURCE=local` é o padrão (D15); use `upstream` para as imagens dos autores:
 
 ```bash
 IMAGE_SOURCE=local
@@ -210,35 +210,55 @@ mc cp --recursive ~/upload/hcApp/ fog1/microfog-app-metadata/hcApp/
 mc cp --recursive ~/upload/app2/  fog1/microfog-app-metadata/app2/
 ```
 
-Confira a replicação no fog2 e no cloud1, com o port-forward deles ativo:
+Confira a replicação no fog2 e no cloud1, com o port-forward deles ativo.
+
+`fog2$` (pc-lamp-2):
 
 ```bash
-fog2$   mc ls fog2/microfog-app-metadata/hcApp/
-cloud1$ mc ls cloud1/microfog-app-metadata/hcApp/
+mc ls fog2/microfog-app-metadata/hcApp/
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+mc ls cloud1/microfog-app-metadata/hcApp/
 ```
 
 ### 5. Redis
 
 Os manifestos usados são as cópias de `~/stores/`, com `redis:7.0` (passo 0).
 
+`cloud1$` (pc-lamp-3) suba o primário:
+
 ```bash
-cloud1$   cd ~/stores/redis-setup && kubectl -n control-engine apply -f redis-primary.yaml
-fog1$     cd ~/stores/redis-setup && kubectl -n control-engine apply -f redis-replica.yaml
-fog2$     cd ~/stores/redis-setup && kubectl -n control-engine apply -f redis-replica.yaml
-clusters$ cd ~/stores/redis-setup && kubectl -n control-engine apply \
-            -f redis-service.yaml -f redis-service-primary.yaml -f redis-vs.yaml -f redis-dr.yaml
+cd ~/stores/redis-setup && kubectl -n control-engine apply -f redis-primary.yaml
+```
+
+`fog1$` (pc-lamp-1) e `fog2$` (pc-lamp-2) subam as réplicas:
+
+```bash
+cd ~/stores/redis-setup && kubectl -n control-engine apply -f redis-replica.yaml
+```
+
+`clusters$` (pc-lamp-1 a 3) crie os Services, o VS e a DR:
+
+```bash
+cd ~/stores/redis-setup && kubectl -n control-engine apply \
+  -f redis-service.yaml -f redis-service-primary.yaml -f redis-vs.yaml -f redis-dr.yaml
 ```
 
 As réplicas apontam para `redis-primary.control-engine.svc.cluster.local` (`--slaveof`), que só tem endpoint no cloud1. A replicação Redis passa pela malha.
 
+`fog1$` (pc-lamp-1) confira a réplica:
+
 ```bash
-fog1$ kubectl -n control-engine exec redis-replica -c redis-replica -- redis-cli info replication
+kubectl -n control-engine exec redis-replica -c redis-replica -- redis-cli info replication
 ```
 
-Esperado: `role:slave` e `master_link_status:up`. Confira também no fog2:
+Esperado: `role:slave` e `master_link_status:up`. `fog2$` (pc-lamp-2) confira também:
 
 ```bash
-fog2$ kubectl -n control-engine exec redis-replica -c redis-replica -- redis-cli info replication
+kubectl -n control-engine exec redis-replica -c redis-replica -- redis-cli info replication
 ```
 
 Os metadados só serão gravados no M4, quando o CE do cloud1 subir.
@@ -246,10 +266,10 @@ Os metadados só serão gravados no M4, quando o CE do cloud1 subir.
 ## O que observar
 
 - `mc ls` mostra os mesmos arquivos nos três servidores, embora o upload tenha sido feito em um só.
-- `kubectl -n control-engine get endpoints minio -o wide` mostra só o endpoint local. Os remotos são vistos pelo Istio, pelo sidecar do `sleep` do M2:
+- `kubectl -n control-engine get endpoints minio -o wide` mostra só o endpoint local. Os remotos são vistos pelo Istio, pelo sidecar do `sleep` do M2. `fog1$` (pc-lamp-1):
 
   ```bash
-  fog1$ istioctl proxy-config endpoints deploy/sleep.sample \
+  istioctl proxy-config endpoints deploy/sleep.sample \
     --cluster "outbound|9000||minio.control-engine.svc.cluster.local"
   ```
 

@@ -80,7 +80,7 @@ Na BIOS: desative suspensão e hibernação, e ative "power on after AC loss" se
 
 ### 2. Reserva DHCP e netplan com duas interfaces
 
-`todas$` veja os nomes das interfaces e o MAC da cabeada:
+`todas$` (pc-lamp-1 a 6) veja os nomes das interfaces e o MAC da cabeada:
 
 ```bash
 ip -br link      # 1ª coluna: nome; 3ª coluna: MAC
@@ -90,7 +90,7 @@ A cabeada é `eno1` em todos os PCs. A Wi-Fi é `wlp2s0`, exceto no **PC2**, ond
 
 No roteador do switch (pela página de administração dele, no navegador), reserve para cada PC o IP da tabela de papéis, associado ao MAC do `eno1`. O IP do cabo vai para certificados e configurações do Istio (D12), então a reserva **não pode** mudar.
 
-`todas$` veja que arquivo o instalador criou em `/etc/netplan/`:
+`todas$` (pc-lamp-1 a 6) veja que arquivo o instalador criou em `/etc/netplan/`:
 
 ```bash
 ls /etc/netplan/
@@ -155,14 +155,14 @@ Confira também se a Wi-Fi **não** entrega endereços em `192.168.0.0/24`, a fa
 
 ### 4. Nomes, SSH e administração
 
-O hostname de cada PC é `pc-lamp-<n>`, com `<n>` igual ao número do PC. `todas$` (troque o número em cada PC):
+O hostname de cada PC é `pc-lamp-<n>`, com `<n>` igual ao número do PC. `todas$` (pc-lamp-1 a 6), trocando o número em cada PC:
 
 ```bash
 sudo hostnamectl set-hostname pc-lamp-1    # pc-lamp-2 no PC2, e assim por diante
 hostname                                    # confere
 ```
 
-As lições se referem aos PCs pelo **papel** (`fog1$`, `carga$`, `scp fog1:...`). Sem DNS no switch, quem traduz esses nomes em IPs é o `/etc/hosts` de cada PC, que registra o hostname e o papel como apelido. `todas$`:
+As lições se referem aos PCs pelo **papel** (`fog1$`, `carga$`, `scp fog1:...`). Sem DNS no switch, quem traduz esses nomes em IPs é o `/etc/hosts` de cada PC, que registra o hostname e o papel como apelido. `todas$` (pc-lamp-1 a 6):
 
 ```bash
 sudo nano /etc/hosts
@@ -183,22 +183,24 @@ sudo nano /etc/hosts
 getent hosts fog1 pc-lamp-1     # os dois devem mostrar 192.168.0.11
 ```
 
-O `carga` (pc-lamp-5) é o ponto de administração: dele saem os comandos para os outros PCs e as cópias de segurança (M1, passo 5). Uma chave SSH evita digitar a senha em cada `ssh` e `scp`. `carga$` gere a chave e copie-a para os demais. O `ssh-copy-id` pede a senha de cada PC uma única vez:
+O `carga` (pc-lamp-5) é o ponto de administração: dele saem os comandos para os outros PCs e as cópias de segurança (M1, passo 5). Uma chave SSH evita digitar a senha em cada `ssh` e `scp`. `carga$` (pc-lamp-5) gere a chave e copie-a para os demais. O `ssh-copy-id` pede a senha de cada PC uma única vez:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
 for h in fog1 fog2 cloud1 fog3 reserva; do ssh-copy-id "$h"; done
 ```
 
-No M2 e no [fog3-k3d](fog3-k3d.md), os PCs de cluster trocam certificados e remote secrets entre si com `scp`. `fog1$`, `fog2$` e `cloud1$` façam o mesmo para os outros PCs de cluster:
+No M2 e no [fog3-k3d](fog3-k3d.md), os PCs de cluster trocam certificados e remote secrets entre si com `scp`. `fog1$` (pc-lamp-1), `fog2$` (pc-lamp-2) e `cloud1$` (pc-lamp-3) façam o mesmo para os outros PCs de cluster:
 
 ```bash
 ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
 for h in fog1 fog2 cloud1 fog3; do ssh-copy-id "$h"; done    # copiar para o próprio PC é inofensivo
 ```
 
+`carga$` (pc-lamp-5) confira que o acesso não pede mais senha:
+
 ```bash
-carga$ ssh fog1 hostname        # responde pc-lamp-1 sem pedir senha
+ssh fog1 hostname        # responde pc-lamp-1 sem pedir senha
 ```
 
 ### 5. Relógios sincronizados
@@ -227,13 +229,13 @@ O `carga` sincroniza com servidores públicos, por NTP comum, e serve a hora aos
 
 Não edite o `/etc/chrony/chrony.conf`. A nossa configuração fica em arquivos próprios: as fontes em `sources.d/`, que só aceita `server`, `pool` e `peer`, e o resto em `conf.d/`. O chrony não aceita comentário no fim de uma linha de diretiva, então os comentários ficam em linhas próprias.
 
-`todas$` desative as fontes NTS. O chrony só lê os arquivos `*.sources` desse diretório:
+`todas$` (pc-lamp-1 a 6) desative as fontes NTS. O chrony só lê os arquivos `*.sources` desse diretório:
 
 ```bash
 sudo mv /etc/chrony/sources.d/ubuntu-ntp-pools.sources{,.disabled}
 ```
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 sudo tee /etc/chrony/sources.d/microfog.sources <<'EOF'
@@ -271,7 +273,7 @@ O IP `172.19.176.12`, que é o DNS do roteador do switch, também responde NTP. 
 
 O KinD e o k3d rodam cada nó do Kubernetes como um container, então o Docker é a base dos clusters. O `carga` também precisa dele para o build das imagens (M0).
 
-`todas$` (exceto o `reserva`, que só precisa dele se virar registry ou cluster de monitoramento). Os comandos são os do guia oficial <https://docs.docker.com/engine/install/ubuntu/>. Primeiro, cadastre o repositório da Docker:
+`todas$` (pc-lamp-1 a 5). O `reserva` (pc-lamp-6) só precisa dele se virar registry ou cluster de monitoramento. Os comandos são os do guia oficial <https://docs.docker.com/engine/install/ubuntu/>. Primeiro, cadastre o repositório da Docker:
 
 ```bash
 sudo apt install -y ca-certificates curl
@@ -324,7 +326,7 @@ O M1 usa a faixa `10.201.255.x` desta rede no pool do MetalLB.
 
 ### 7. Ajustes do sistema para o KinD e o k3d
 
-`clusters$` (fog1, fog2, cloud1 e fog3). Clusters com vários nós-container esgotam os limites padrão de *inotify*: os pods ficam em `CrashLoopBackOff` com erro "too many open files".
+`clusters$` (pc-lamp-1 a 4: fog1, fog2, cloud1 e fog3). Clusters com vários nós-container esgotam os limites padrão de *inotify*: os pods ficam em `CrashLoopBackOff` com erro "too many open files".
 
 ```bash
 cat <<'EOF' | sudo tee /etc/sysctl.d/99-kind.conf
@@ -342,7 +344,7 @@ stat -fc %T /sys/fs/cgroup     # esperado: cgroup2fs
 
 ### 8. Ferramentas
 
-`todas$` (PCs 1–5). Cada ferramenta tem um uso nas lições:
+`todas$` (pc-lamp-1 a 5). Cada ferramenta tem um uso nas lições:
 
 | Ferramenta | Para quê |
 |---|---|

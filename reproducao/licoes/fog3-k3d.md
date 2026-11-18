@@ -36,7 +36,7 @@ curl -s "https://registry.hub.docker.com/v2/repositories/rancher/k3s/tags?page_s
   | jq -r '.results[].name' | sort -V | tail
 ```
 
-`fog3$` instale o k3d. O `kubectl` e o `istioctl` já foram instalados no 00 e no M1:
+`fog3$` (pc-lamp-4) instale o k3d. O `kubectl` e o `istioctl` já foram instalados no 00 e no M1:
 
 ```bash
 K3D_VERSION=v5.4.6
@@ -46,13 +46,13 @@ k3d version
 
 ### 2. Criar o cluster
 
-Os `system-reserved` seguem a proposta × 0,5 do [M1](m1-clusters.md#tamanhos-lógicos-dos-nós-questão-em-aberto-a2): server 1,5 vCPU / 3 Gi, agents 1 vCPU / 2 Gi. Os valores abaixo supõem `MemTotal` = 15 360 Mi no PC4. Confira o valor real:
+`fog3$` (pc-lamp-4) os `system-reserved` seguem a proposta × 0,5 do [M1](m1-clusters.md#tamanhos-lógicos-dos-nós-questão-em-aberto-a2): server 1,5 vCPU / 3 Gi, agents 1 vCPU / 2 Gi. Os valores abaixo supõem `MemTotal` = 15 360 Mi no PC4. Confira o valor real:
 
 ```bash
-fog3$ awk '/MemTotal/ {printf "%d Mi\n", $2/1024}' /proc/meminfo
+awk '/MemTotal/ {printf "%d Mi\n", $2/1024}' /proc/meminfo
 ```
 
-`fog3$` grave o comando de criação em `~/clusters/`, como os YAMLs do KinD no M1. Assim ele entra na cópia de segurança e o cluster pode ser recriado igual. Se o `MemTotal` for outro, corrija os valores de `memory=` (MemTotal − alvo − 100 Mi) com `nano ~/clusters/k3d-fog3.sh` antes de rodar:
+`fog3$` (pc-lamp-4) grave o comando de criação em `~/clusters/`, como os YAMLs do KinD no M1. Assim ele entra na cópia de segurança e o cluster pode ser recriado igual. Se o `MemTotal` for outro, corrija os valores de `memory=` (MemTotal − alvo − 100 Mi) com `nano ~/clusters/k3d-fog3.sh` antes de rodar:
 
 ```bash
 mkdir -p ~/clusters
@@ -79,22 +79,24 @@ A sintaxe das opções muda entre versões do k3d (por exemplo, `--k3s-node-labe
 
 O mapeamento de portas usa os **mesmos nodePorts** dos arquivos do Istio do repositório (32012, 32022, 32032), para reaproveitar a configuração do fog1.
 
+`fog3$` (pc-lamp-4) confira os rótulos de topologia e o allocatable dos nós:
+
 ```bash
-fog3$ kubectl get nodes -L topology.kubernetes.io/region,topology.kubernetes.io/zone
-fog3$ kubectl get nodes -o custom-columns=NOME:.metadata.name,CPU:.status.allocatable.cpu,MEM:.status.allocatable.memory
+kubectl get nodes -L topology.kubernetes.io/region,topology.kubernetes.io/zone
+kubectl get nodes -o custom-columns=NOME:.metadata.name,CPU:.status.allocatable.cpu,MEM:.status.allocatable.memory
 ```
 
 ### 3. metrics-server e MetalLB
 
-O k3s já traz o metrics-server. Confira:
+`fog3$` (pc-lamp-4) o k3s já traz o metrics-server. Confira:
 
 ```bash
-fog3$ kubectl top nodes       # aguarde ~1 min depois de criar o cluster
+kubectl top nodes       # aguarde ~1 min depois de criar o cluster
 ```
 
 O MetalLB é instalado como no M1, passo 4, mas o pool é escrito aqui, porque o repositório não tem um para o fog3. Ele contém `192.168.0.14/32` e uma faixa da rede Docker que o k3d criou (`k3d-fog3`). Com as faixas do Docker do [00](00-preparar-pcs-e-rede.md), passo 6, ela fica em `10.200.x.0/24`.
 
-`fog3$`:
+`fog3$` (pc-lamp-4):
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.7/config/manifests/metallb-native.yaml
@@ -126,14 +128,14 @@ kubectl apply -f ~/clusters/ip_pool_fog3.yaml
 
 ### 4. Istio
 
-**CA.** O fog3 precisa de um certificado intermediário assinado pela mesma CA raiz do M2. Ela só existe no fog1 (`~/certs`), então o certificado é gerado lá e copiado:
+**CA.** O fog3 precisa de um certificado intermediário assinado pela mesma CA raiz do M2. Ela só existe no fog1 (`~/certs`), então o certificado é gerado lá e copiado. `fog1$` (pc-lamp-1):
 
 ```bash
-fog1$ cd ~/certs && make -f $ISTIO/tools/certs/Makefile.selfsigned.mk fog3-cacerts
-fog1$ scp -r ~/certs/fog3 fog3:~/certs-fog3
+cd ~/certs && make -f $ISTIO/tools/certs/Makefile.selfsigned.mk fog3-cacerts
+scp -r ~/certs/fog3 fog3:~/certs-fog3
 ```
 
-`fog3$` crie o secret `cacerts` antes de instalar o Istio, como no M2, passo 1:
+`fog3$` (pc-lamp-4) crie o secret `cacerts` antes de instalar o Istio, como no M2, passo 1:
 
 ```bash
 D=~/certs-fog3
@@ -144,7 +146,7 @@ kubectl -n istio-system create secret generic cacerts \
 kubectl label namespace istio-system topology.istio.io/network=network4
 ```
 
-**Instalação.** O `istio-fog3.yaml` parte do arquivo do fog1, com `clusterName: k3d-fog3`, `network4` em todas as ocorrências e o IP do PC4. `fog3$`:
+**Instalação.** O `istio-fog3.yaml` parte do arquivo do fog1, com `clusterName: k3d-fog3`, `network4` em todas as ocorrências e o IP do PC4. `fog3$` (pc-lamp-4):
 
 ```bash
 sed -e 's/kind-fog1/k3d-fog3/' -e 's/network1/network4/g' -e 's/<PUBLIC_IP_OF_THE_VM>/192.168.0.14/' \
@@ -161,7 +163,7 @@ kubectl -n istio-system apply -f istio-cross-gateway.yaml
 kubectl -n istio-system apply -f apiserver-gateway.yaml -f apiserver-vs.yaml
 ```
 
-**`meshNetworks`.** `clusters$` (os quatro, fog3 incluído) acrescente a `network4`. O comando substitui a lista inteira do M2, passo 4:
+**`meshNetworks`.** `clusters$` (pc-lamp-1 a 4, fog3 incluído) acrescente a `network4`. O comando substitui a lista inteira do M2, passo 4:
 
 ```bash
 kubectl -n istio-system patch configmap istio --type merge -p '
@@ -183,14 +185,14 @@ data:
 '
 ```
 
-**Remote secrets.** O fog3 gera o seu e precisa dos três que os outros PCs geraram no M2, passo 5:
+**Remote secrets.** O fog3 gera o seu e precisa dos três que os outros PCs geraram no M2, passo 5. `fog3$` (pc-lamp-4):
 
 ```bash
-fog3$ cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=k3d-fog3 \
-        --server=https://192.168.0.14:6443 > secret-fog3.yaml
+cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=k3d-fog3 \
+  --server=https://192.168.0.14:6443 > secret-fog3.yaml
 ```
 
-Só o fog1, o fog2 e o cloud1 têm chave SSH para o fog3 (00, passo 4), então são eles que copiam nos dois sentidos. `fog1$`, `fog2$` e `cloud1$` (troque `C`):
+Só o fog1, o fog2 e o cloud1 têm chave SSH para o fog3 (00, passo 4), então são eles que copiam nos dois sentidos. `fog1$` (pc-lamp-1), `fog2$` (pc-lamp-2) e `cloud1$` (pc-lamp-3), trocando `C`:
 
 ```bash
 C=fog1
@@ -198,20 +200,29 @@ scp ~/secret-$C.yaml fog3: && scp fog3:secret-fog3.yaml ~/
 kubectl apply -f ~/secret-fog3.yaml
 ```
 
+`fog3$` (pc-lamp-4) aplique os secrets que os outros três copiaram para ele:
+
 ```bash
-fog3$ kubectl apply -f ~/secret-fog1.yaml -f ~/secret-fog2.yaml -f ~/secret-cloud1.yaml
-fog3$ kubectl -n istio-system get secrets -l istio/multiCluster=true     # três secrets
+kubectl apply -f ~/secret-fog1.yaml -f ~/secret-fog2.yaml -f ~/secret-cloud1.yaml
+kubectl -n istio-system get secrets -l istio/multiCluster=true     # três secrets
 ```
 
-**Teste com o helloworld** (M2, passo 6), agora com uma instância no fog3:
+**Teste com o helloworld** (M2, passo 6), agora com uma instância no fog3.
+
+`fog3$` (pc-lamp-4) implante o helloworld v2:
 
 ```bash
-fog3$ kubectl create ns sample && kubectl label ns sample istio-injection=enabled
-fog3$ kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l service=helloworld
-fog3$ kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v2
-fog1$ for i in $(seq 20); do
-        kubectl -n sample exec deploy/sleep -c sleep -- curl -sS helloworld.sample:5000/hello
-      done
+kubectl create ns sample && kubectl label ns sample istio-injection=enabled
+kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l service=helloworld
+kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v2
+```
+
+`fog1$` (pc-lamp-1) faça 20 requisições:
+
+```bash
+for i in $(seq 20); do
+  kubectl -n sample exec deploy/sleep -c sleep -- curl -sS helloworld.sample:5000/hello
+done
 ```
 
 Algumas respostas devem vir do pod do fog3 (compare o nome da instância com `fog3$ kubectl -n sample get pods`).
@@ -220,7 +231,7 @@ Algumas respostas devem vir do pod do fog3 (compare o nome da instância com `fo
 
 **Data stores.** O artigo (E1) mantém data stores em fog1, fog2 e cloud1. O fog3 acessa os stores **pela malha**. Mesmo sem uma instância local, ele precisa dos Services `minio` e `redis`, dos VS e das DR, para que o nome DNS resolva e o failover por localidade valha também para ele.
 
-`fog3$` faça a cópia dos manifestos do M3, passo 0, e aplique só os Services e as regras:
+`fog3$` (pc-lamp-4) faça a cópia dos manifestos do M3, passo 0, e aplique só os Services e as regras:
 
 ```bash
 mkdir -p ~/stores
@@ -234,7 +245,7 @@ cd ~/stores/redis-setup
 kubectl -n control-engine apply -f redis-service.yaml -f redis-service-primary.yaml -f redis-vs.yaml -f redis-dr.yaml
 ```
 
-**ConfigMap e pod do CE.** O repositório não tem arquivos do fog3; eles partem dos do fog2. O fog3 tem como vizinhos os outros dois fogs e o cloud1. `fog3$`:
+**ConfigMap e pod do CE.** O repositório não tem arquivos do fog3; eles partem dos do fog2. O fog3 tem como vizinhos os outros dois fogs e o cloud1. `fog3$` (pc-lamp-4):
 
 ```bash
 SETUP=~/MicroFog/Prototype_Setup/control-engine-setup
@@ -249,13 +260,13 @@ grep -E "cluster\.name|adjacent|populatemetadata|forwardpolicy" ~/ce/controller-
 grep -E "name:|cluster:|image:" ~/ce/controller-fog3.yaml
 ```
 
-**DR e VS do CE.** `clusters$` (os quatro) acrescente o subset `fog3` à `control-engine-dr` e a rota `cluster: fog3` ao `control-engine-vs` do M4. O fog3 ainda não tem esses arquivos; o fog1 os envia, antes de acrescentar o fog3 aos seus:
+**DR e VS do CE.** Os quatro PCs acrescentam o subset `fog3` à `control-engine-dr` e a rota `cluster: fog3` ao `control-engine-vs` do M4. O fog3 ainda não tem esses arquivos. `fog1$` (pc-lamp-1) envie-os, antes de acrescentar o fog3 aos seus:
 
 ```bash
-fog1$ scp ~/ce/controller-dr.yaml ~/ce/controller-vs.yaml fog3:ce/
+scp ~/ce/controller-dr.yaml ~/ce/controller-vs.yaml fog3:ce/
 ```
 
-Depois, nos quatro PCs:
+Depois, `clusters$` (pc-lamp-1 a 4):
 
 ```bash
 cat >> ~/ce/controller-dr.yaml <<'EOF'
@@ -270,25 +281,37 @@ EOF
 kubectl -n control-engine apply -f ~/ce/controller-dr.yaml -f ~/ce/controller-vs.yaml
 ```
 
-**Subir o CE do fog3**, com os mesmos comandos do M4, passo 3:
+**Subir o CE do fog3.** `fog3$` (pc-lamp-4), com os mesmos comandos do M4, passo 3:
 
 ```bash
-fog3$ cd ~/MicroFog/Prototype_Setup/control-engine-setup
-fog3$ kubectl -n control-engine apply -f controller-service-account.yaml -f permission.yaml
-fog3$ kubectl -n control-engine apply -f ~/ce/controller-configmap-fog3.yaml -f ~/ce/controller-fog3.yaml
-fog3$ kubectl -n control-engine apply -f controller-service.yaml -f controller-gateway.yaml
-fog3$ kubectl -n control-engine wait --for=condition=Ready pod/controller-fog3 --timeout=300s
+cd ~/MicroFog/Prototype_Setup/control-engine-setup
+kubectl -n control-engine apply -f controller-service-account.yaml -f permission.yaml
+kubectl -n control-engine apply -f ~/ce/controller-configmap-fog3.yaml -f ~/ce/controller-fog3.yaml
+kubectl -n control-engine apply -f controller-service.yaml -f controller-gateway.yaml
+kubectl -n control-engine wait --for=condition=Ready pod/controller-fog3 --timeout=300s
 ```
 
-**Vizinhos nos outros CEs.** O fog3 entra como mais um fog vizinho, no próximo índice livre de cada ConfigMap:
+**Vizinhos nos outros CEs.** O fog3 entra como mais um fog vizinho, no próximo índice livre de cada ConfigMap.
+
+`fog1$` (pc-lamp-1):
 
 ```bash
-fog1$   sed -i '/fog.adjacent.cluster\[0\] = fog2/a\    fog.adjacent.cluster[1] = fog3' ~/ce/controller-configmap-fog1.yaml
-fog2$   sed -i '/fog.adjacent.cluster\[0\] = fog1/a\    fog.adjacent.cluster[1] = fog3' ~/ce/controller-configmap-fog2.yaml
-cloud1$ sed -i '/fog.adjacent.cluster\[1\] = fog2/a\    fog.adjacent.cluster[2] = fog3' ~/ce/controller-configmap-cloud1.yaml
+sed -i '/fog.adjacent.cluster\[0\] = fog2/a\    fog.adjacent.cluster[1] = fog3' ~/ce/controller-configmap-fog1.yaml
 ```
 
-`fog1$`, `fog2$` e `cloud1$` confira e reinicie o CE (troque `C`):
+`fog2$` (pc-lamp-2):
+
+```bash
+sed -i '/fog.adjacent.cluster\[0\] = fog1/a\    fog.adjacent.cluster[1] = fog3' ~/ce/controller-configmap-fog2.yaml
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+sed -i '/fog.adjacent.cluster\[1\] = fog2/a\    fog.adjacent.cluster[2] = fog3' ~/ce/controller-configmap-cloud1.yaml
+```
+
+`fog1$` (pc-lamp-1), `fog2$` (pc-lamp-2) e `cloud1$` (pc-lamp-3) confira e reinicie o CE (troque `C`):
 
 ```bash
 C=fog1
@@ -302,13 +325,18 @@ kubectl -n control-engine wait --for=condition=Ready pod/controller-$C --timeout
 ## O que observar
 
 - `carga$ curl -H "Host: control-engine.control-engine.svc.cluster.local" -H "cluster: fog3" http://192.168.0.11/MicroFog/home` responde "… - fog3".
-- Um PR do hcApp com `entryClusters: ["fog3"]` submetido ao fog3: compare o tempo `NEW_PR_RECEIVED` → `PLACEMENT_COMPLETED` com o mesmo PR no fog1 (esboço do E4). Com o `hcapp` apagado em todos os clusters:
+- Um PR do hcApp com `entryClusters: ["fog3"]` submetido ao fog3: compare o tempo `NEW_PR_RECEIVED` → `PLACEMENT_COMPLETED` com o mesmo PR no fog1 (esboço do E4). Com o `hcapp` apagado em todos os clusters, `fog3$` (pc-lamp-4) acompanhe o log:
 
   ```bash
-  fog3$  kubectl -n control-engine logs -f controller-fog3 -c controller-fog3 | grep -E "NEW_PR_RECEIVED|PLACEMENT_COMPLETED"
-  carga$ cd ~ && sed 's/"cloud1"/"fog3"/' pr-hcapp.json > pr-hcapp-fog3.json
-  carga$ curl -s -H "Host: control-engine.control-engine.svc.cluster.local" -H "cluster: fog3" \
-           -H 'Content-Type: application/json' -d @pr-hcapp-fog3.json http://192.168.0.14/MicroFog/addPR
+  kubectl -n control-engine logs -f controller-fog3 -c controller-fog3 | grep -E "NEW_PR_RECEIVED|PLACEMENT_COMPLETED"
+  ```
+
+  `carga$` (pc-lamp-5) submeta o PR ao fog3:
+
+  ```bash
+  cd ~ && sed 's/"cloud1"/"fog3"/' pr-hcapp.json > pr-hcapp-fog3.json
+  curl -s -H "Host: control-engine.control-engine.svc.cluster.local" -H "cluster: fog3" \
+    -H 'Content-Type: application/json' -d @pr-hcapp-fog3.json http://192.168.0.14/MicroFog/addPR
   ```
 
 ## Verifique seu entendimento

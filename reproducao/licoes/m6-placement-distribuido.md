@@ -46,7 +46,7 @@ Com throughput **200**: quantas instâncias de cada microserviço, e quanto de C
 
 O filtro `jq` calcula a CPU livre de cada nó como o CE faz (`FogDevice.getRemainingCpu`): o total menos o maior valor entre o usado e o alocado.
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -63,7 +63,7 @@ Escreva: o que fica no fog1, o que vai para o fog2 e o que (se algo) vai para o 
 
 Abra antes os três terminais do passo 3, para ver o PR chegando.
 
-`carga$` (se pela previsão você aumentou o throughput, troque o `200`):
+`carga$` (pc-lamp-5) grave o PR e envie-o. Se pela previsão você aumentou o throughput, troque o `200`:
 
 ```bash
 cd ~
@@ -79,24 +79,38 @@ curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
 
 ### 3. Seguir o PR pelos três clusters
 
-Abra três terminais:
+Abra três terminais, um em cada PC de cluster.
+
+`fog1$` (pc-lamp-1):
 
 ```bash
-fog1$   kubectl -n control-engine logs -f controller-fog1   -c controller-fog1
-fog2$   kubectl -n control-engine logs -f controller-fog2   -c controller-fog2
-cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
+kubectl -n control-engine logs -f controller-fog1 -c controller-fog1
+```
+
+`fog2$` (pc-lamp-2):
+
+```bash
+kubectl -n control-engine logs -f controller-fog2 -c controller-fog2
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1
 ```
 
 Procure `REQUEST_FORWARD` no fog1 e `NEW_PR_RECEIVED` logo depois no fog2. Os timestamps em milissegundos permitem medir quanto tempo o forwarding levou.
 
+`clusters$` (pc-lamp-1 a 3) veja onde cada microserviço foi parar:
+
 ```bash
-clusters$ kubectl -n app2 get pods -o wide
-clusters$ kubectl -n app2 get svc,vs,dr
+kubectl -n app2 get pods -o wide
+kubectl -n app2 get svc,vs,dr
 ```
 
 ### 4. Chamar a aplicação
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 curl -s -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
@@ -109,13 +123,13 @@ A requisição entra no fog1, e cada chamada para um microserviço que está em 
 
 Essa é a comparação FP1 × FP2 da Fig. 12.
 
-Apague o `app2` em todos os clusters:
+`clusters$` (pc-lamp-1 a 3) apague o `app2` em todos os clusters:
 
 ```bash
-clusters$ kubectl delete ns app2
+kubectl delete ns app2
 ```
 
-`fog1$` mude a política para `to_cloud`. O CE só lê o ConfigMap ao iniciar, e o pod não pertence a um Deployment, então é preciso apagá-lo e aplicá-lo de novo:
+`fog1$` (pc-lamp-1) mude a política para `to_cloud`. O CE só lê o ConfigMap ao iniciar, e o pod não pertence a um Deployment, então é preciso apagá-lo e aplicá-lo de novo:
 
 ```bash
 sed -i 's/forwardpolicy = to_rand_fog/forwardpolicy = to_cloud/' ~/ce/controller-configmap-fog1.yaml

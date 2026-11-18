@@ -50,7 +50,7 @@ As imagens ficam no GHCR, o registry do GitHub, que não tem o limite de pulls d
 
 **Cada pessoa que for publicar**, na própria conta: *Settings → Developer settings → Personal access tokens (classic)*, com o escopo `write:packages` e uma data de expiração. Copie o token gerado. Se a organização usar SSO, autorize o token nela (*Configure SSO*).
 
-`carga$` grave o nome da organização no `~/.bashrc`. Os comandos deste marco usam `$GHCR_ORG`, que assim continua definida em qualquer shell novo:
+`carga$` (pc-lamp-5) grave o nome da organização no `~/.bashrc`. Os comandos deste marco usam `$GHCR_ORG`, que assim continua definida em qualquer shell novo:
 
 ```bash
 echo 'export GHCR_ORG=nome-da-org' >> ~/.bashrc     # troque nome-da-org
@@ -58,7 +58,7 @@ source ~/.bashrc
 echo "$GHCR_ORG"
 ```
 
-`carga$` faça login com o **seu** usuário do GitHub. O `read -s` lê o token sem mostrá-lo na tela nem gravá-lo no histórico do shell. Digite o usuário, tecle `Enter`, cole o token e tecle `Enter`:
+`carga$` (pc-lamp-5) faça login com o **seu** usuário do GitHub. O `read -s` lê o token sem mostrá-lo na tela nem gravá-lo no histórico do shell. Digite o usuário, tecle `Enter`, cole o token e tecle `Enter`:
 
 ```bash
 read -p "Usuário do GitHub: " GH_USER
@@ -71,13 +71,15 @@ O `docker login` grava o token em `~/.docker/config.json`, em base64, que não �
 
 ### 2. Build do CE
 
+`carga$` (pc-lamp-5) compile o CE, gere a imagem e publique-a:
+
 ```bash
-carga$ cd ~/MicroFog/ControlEngine
-carga$ docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
-        maven:3.9-eclipse-temurin-17 mvn -B package -DskipTests
-carga$ TAG=src-$(git rev-parse --short HEAD)
-carga$ docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/$GHCR_ORG/microfog:$TAG .
-carga$ docker push ghcr.io/$GHCR_ORG/microfog:$TAG
+cd ~/MicroFog/ControlEngine
+docker run --rm -v "$PWD":/src -v "$HOME/.m2":/root/.m2 -w /src \
+  maven:3.9-eclipse-temurin-17 mvn -B package -DskipTests
+TAG=src-$(git rev-parse --short HEAD)
+docker build -f src/main/docker/Dockerfile.jvm -t ghcr.io/$GHCR_ORG/microfog:$TAG .
+docker push ghcr.io/$GHCR_ORG/microfog:$TAG
 ```
 
 `-DskipTests` é necessário porque os testes em `src/test` precisam de um cluster e de Redis/MinIO rodando.
@@ -86,14 +88,14 @@ carga$ docker push ghcr.io/$GHCR_ORG/microfog:$TAG
 
 Para cada microserviço, o script abaixo troca o namespace e o ConfigMap no `application.properties`, compila e publica.
 
-`carga$` antes, **confira** os nomes dos ConfigMaps. O script supõe que cada um se chama `<microserviço>-config`:
+`carga$` (pc-lamp-5) antes, **confira** os nomes dos ConfigMaps. O script supõe que cada um se chama `<microserviço>-config`:
 
 ```bash
 cd ~/MicroFog/Workload_Generator/dummy-micro-java
 grep -h "name:" ../sample-deployment-resources/*/*-config.yaml
 ```
 
-`carga$` grave o script:
+`carga$` (pc-lamp-5) grave o script:
 
 ```bash
 cat > ~/build-dummies.sh <<'SCRIPT'
@@ -119,7 +121,7 @@ done
 SCRIPT
 ```
 
-`carga$` rode o script e confira que o `application.properties` voltou ao original:
+`carga$` (pc-lamp-5) rode o script e confira que o `application.properties` voltou ao original:
 
 ```bash
 bash ~/build-dummies.sh
@@ -134,18 +136,18 @@ O primeiro push cria cada pacote na organização como **privado**. No GitHub, n
 
 Na mesma página, em *Manage access*, dê o papel **Write** aos membros (ou a um time) que também vão publicar. Por padrão, só quem fez o primeiro push e os donos da organização podem publicar novas versões.
 
-Confira sem login. O `docker logout` simula um nó do KinD, que não tem credenciais:
+`carga$` (pc-lamp-5) confira sem login. O `docker logout` simula um nó do KinD, que não tem credenciais:
 
 ```bash
-carga$ docker logout ghcr.io
-carga$ docker pull ghcr.io/$GHCR_ORG/dummy-microservice:hcm1    # deve baixar sem "denied"
+docker logout ghcr.io
+docker pull ghcr.io/$GHCR_ORG/dummy-microservice:hcm1    # deve baixar sem "denied"
 ```
 
 ### 5. Registrar os digests
 
 O digest identifica o conteúdo da imagem. Os manifestos usam o digest, e não a tag, para que uma republicação da tag não troque a imagem no meio dos experimentos (D15).
 
-`carga$` (o `TAG` do passo 2 se perde se você abriu outro shell; recrie-o com o mesmo comando):
+`carga$` (pc-lamp-5) liste os digests. O `TAG` do passo 2 se perde quando você abre outro shell, por isso o primeiro comando o recria:
 
 ```bash
 cd ~/MicroFog/ControlEngine && TAG=src-$(git rev-parse --short HEAD)

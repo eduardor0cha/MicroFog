@@ -51,7 +51,7 @@ echo $ISTIO && ls $ISTIO/bin/istioctl
 
 ### 1. CA raiz comum
 
-`fog1$` Gere uma CA raiz e um certificado intermediário por cluster. Isso só é feito no fog1.
+`fog1$` (pc-lamp-1) gere uma CA raiz e um certificado intermediário por cluster. Isso só é feito no fog1.
 
 Os certificados são gerados por um Makefile que vem com o Istio. O Ubuntu Server não traz o `make`, então instale-o antes:
 
@@ -64,7 +64,7 @@ scp -r ~/certs/fog2   fog2:~/certs-fog2
 scp -r ~/certs/cloud1 cloud1:~/certs-cloud1
 ```
 
-`clusters$` Crie o secret `cacerts` **antes** de instalar o Istio. Troque `D` conforme o PC: `~/certs/fog1` no fog1, `~/certs-fog2` no fog2, `~/certs-cloud1` no cloud1:
+`clusters$` (pc-lamp-1 a 3) crie o secret `cacerts` **antes** de instalar o Istio. Troque `D` conforme o PC: `~/certs/fog1` no fog1, `~/certs-fog2` no fog2, `~/certs-cloud1` no cloud1:
 
 ```bash
 D=~/certs/fog1
@@ -78,7 +78,7 @@ kubectl -n istio-system create secret generic cacerts \
 
 ### 2. Rede do namespace e instalação
 
-`clusters$` troque as três variáveis conforme o PC, com as redes dos arquivos do repositório:
+`clusters$` (pc-lamp-1 a 3) troque as três variáveis conforme o PC, com as redes dos arquivos do repositório:
 
 | PC | `C` | `NET` | `IP` |
 |---|---|---|---|
@@ -111,7 +111,7 @@ O Service `istio-eastwestgateway` deve ter `EXTERNAL-IP` = IP do PC (vindo do Me
 
 ### 3. Gateways entre clusters
 
-`clusters$`
+`clusters$` (pc-lamp-1 a 3) crie os gateways:
 
 ```bash
 cd ~/MicroFog/Prototype_Setup/cluster-setup
@@ -119,15 +119,15 @@ kubectl -n istio-system apply -f istio-cross-gateway.yaml
 kubectl -n istio-system apply -f apiserver-gateway.yaml -f apiserver-vs.yaml
 ```
 
-Teste a partir de **outro** PC: o API server do fog1 deve responder através do gateway, com certificado válido para o IP (M1, passo 2):
+`fog2$` (pc-lamp-2) teste a partir de **outro** PC: o API server do fog1 deve responder através do gateway, com certificado válido para o IP (M1, passo 2):
 
 ```bash
-fog2$ curl -k https://192.168.0.11:6443/version
+curl -k https://192.168.0.11:6443/version
 ```
 
 ### 4. `meshNetworks`
 
-`clusters$` Diga a cada `istiod` onde fica o gateway de cada rede. A lista fica na chave `meshNetworks` do ConfigMap `istio`, ao lado (e não dentro) da chave `mesh`, como no guia original (`Prototype_Setup/docs/cluster_setup.pdf`). O comando é o mesmo nos três PCs:
+`clusters$` (pc-lamp-1 a 3) diga a cada `istiod` onde fica o gateway de cada rede. A lista fica na chave `meshNetworks` do ConfigMap `istio`, ao lado (e não dentro) da chave `mesh`, como no guia original (`Prototype_Setup/docs/cluster_setup.pdf`). O comando é o mesmo nos três PCs:
 
 ```bash
 kubectl -n istio-system patch configmap istio --type merge -p '
@@ -155,31 +155,55 @@ kubectl -n istio-system logs deploy/istiod --since=2m | grep -i meshnetworks
 
 ### 5. Remote secrets
 
-Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada PC **gera** o seu, apontando para o próprio IP, e o envia aos outros:
+Cada cluster precisa de um secret de cada um dos outros dois, ou seja, 6 secrets ao todo. Cada PC **gera** o seu, apontando para o próprio IP, e o envia aos outros.
+
+`fog1$` (pc-lamp-1):
 
 ```bash
-fog1$   cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog1 \
-          --server=https://192.168.0.11:6443 > secret-fog1.yaml
-fog1$   scp secret-fog1.yaml fog2: && scp secret-fog1.yaml cloud1:
+cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog1 \
+  --server=https://192.168.0.11:6443 > secret-fog1.yaml
+scp secret-fog1.yaml fog2: && scp secret-fog1.yaml cloud1:
+```
 
-fog2$   cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog2 \
-          --server=https://192.168.0.12:6443 > secret-fog2.yaml
-fog2$   scp secret-fog2.yaml fog1: && scp secret-fog2.yaml cloud1:
+`fog2$` (pc-lamp-2):
 
-cloud1$ cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-cloud1 \
-          --server=https://192.168.0.13:6443 > secret-cloud1.yaml
-cloud1$ scp secret-cloud1.yaml fog1: && scp secret-cloud1.yaml fog2:
+```bash
+cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-fog2 \
+  --server=https://192.168.0.12:6443 > secret-fog2.yaml
+scp secret-fog2.yaml fog1: && scp secret-fog2.yaml cloud1:
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+cd ~ && $ISTIO/bin/istioctl x create-remote-secret --name=kind-cloud1 \
+  --server=https://192.168.0.13:6443 > secret-cloud1.yaml
+scp secret-cloud1.yaml fog1: && scp secret-cloud1.yaml fog2:
 ```
 
 No Istio 1.16, o comando é experimental (`istioctl x create-remote-secret`). Nas versões do fallback, ele virou `istioctl create-remote-secret`.
 
-Depois, em cada PC, aplique os dois secrets recebidos:
+Depois, em cada PC, aplique os dois secrets recebidos.
+
+`fog1$` (pc-lamp-1):
 
 ```bash
-fog1$   kubectl apply -f ~/secret-fog2.yaml -f ~/secret-cloud1.yaml
-fog2$   kubectl apply -f ~/secret-fog1.yaml -f ~/secret-cloud1.yaml
-cloud1$ kubectl apply -f ~/secret-fog1.yaml -f ~/secret-fog2.yaml
+kubectl apply -f ~/secret-fog2.yaml -f ~/secret-cloud1.yaml
 ```
+
+`fog2$` (pc-lamp-2):
+
+```bash
+kubectl apply -f ~/secret-fog1.yaml -f ~/secret-cloud1.yaml
+```
+
+`cloud1$` (pc-lamp-3):
+
+```bash
+kubectl apply -f ~/secret-fog1.yaml -f ~/secret-fog2.yaml
+```
+
+`clusters$` (pc-lamp-1 a 3) confira:
 
 ```bash
 kubectl -n istio-system get secrets -l istio/multiCluster=true    # dois secrets istio-remote-secret-*
@@ -189,31 +213,39 @@ kubectl -n istio-system get secrets -l istio/multiCluster=true    # dois secrets
 
 ### 6. Teste com o helloworld
 
-`clusters$`
+`clusters$` (pc-lamp-1 a 3) crie o namespace e o Service:
 
 ```bash
 kubectl create ns sample && kubectl label ns sample istio-injection=enabled
 kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l service=helloworld
 ```
 
-O Service `helloworld` precisa existir **em todos os clusters**, para que o nome DNS resolva localmente. Os pods ficam distribuídos:
+O Service `helloworld` precisa existir **em todos os clusters**, para que o nome DNS resolva localmente. Os pods ficam distribuídos.
+
+`fog1$` (pc-lamp-1) implante o v1 e o `sleep`, de onde saem as requisições:
 
 ```bash
-fog1$   kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v1
-fog1$   kubectl -n sample apply -f $ISTIO/samples/sleep/sleep.yaml
-fog2$   kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v2
-cloud1$ kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v2
+kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v1
+kubectl -n sample apply -f $ISTIO/samples/sleep/sleep.yaml
 ```
 
+`fog2$` (pc-lamp-2) e `cloud1$` (pc-lamp-3) implantem o v2:
+
 ```bash
-fog1$ for i in $(seq 10); do
-        kubectl -n sample exec deploy/sleep -c sleep -- curl -sS helloworld.sample:5000/hello
-      done
+kubectl -n sample apply -f $ISTIO/samples/helloworld/helloworld.yaml -l version=v2
+```
+
+`fog1$` (pc-lamp-1) faça 10 requisições:
+
+```bash
+for i in $(seq 10); do
+  kubectl -n sample exec deploy/sleep -c sleep -- curl -sS helloworld.sample:5000/hello
+done
 ```
 
 ### 7. Guardar a configuração
 
-`carga$` copie `~/clusters` e `~/certs*` de cada PC, como no M1, passo 5. O `~/certs` do fog1 guarda a CA raiz: sem ele, um cluster novo (o fog3, por exemplo) não entra na malha sem refazer os certificados de todos.
+`carga$` (pc-lamp-5) copie `~/clusters` e `~/certs*` de cada PC, como no M1, passo 5. O `~/certs` do fog1 guarda a CA raiz: sem ele, um cluster novo (o fog3, por exemplo) não entra na malha sem refazer os certificados de todos.
 
 ```bash
 for h in fog1 fog2 cloud1; do
@@ -226,11 +258,11 @@ ls ~/backup/fog1/certs/root-ca.conf ~/backup/fog1/certs/root-key.pem    # a CA r
 ## O que observar
 
 - As respostas alternam entre `v1` (fog1) e `v2`. O nome da instância mostra se a v2 veio do fog2 ou do cloud1: compare com `kubectl -n sample get pods` em cada PC.
-- Veja como o sidecar do sleep enxerga os endpoints:
+- `fog1$` (pc-lamp-1) veja como o sidecar do sleep enxerga os endpoints:
 
   ```bash
-  fog1$ $ISTIO/bin/istioctl proxy-config endpoints deploy/sleep.sample \
-          --cluster "outbound|5000||helloworld.sample.svc.cluster.local"
+  $ISTIO/bin/istioctl proxy-config endpoints deploy/sleep.sample \
+    --cluster "outbound|5000||helloworld.sample.svc.cluster.local"
   ```
 
   O endpoint local aparece com o IP do pod. Os remotos aparecem como `192.168.0.12:15443` e `192.168.0.13:15443`, ou seja, **os gateways**, não os pods.

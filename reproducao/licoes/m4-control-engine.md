@@ -53,7 +53,7 @@ O `Prototype_Setup/control-engine-setup/controller-vs.yaml` tem rotas para `/Mic
 
 Hipótese: a imagem `samodha/microfog:latest` foi construída de uma versão do código com os nomes antigos, e o VS acompanhou aquela versão. **Teste** essa hipótese no passo 5, em vez de assumi-la.
 
-`clusters$` crie `~/ce/controller-vs.yaml` roteando **só pelo cabeçalho**, o que vale para qualquer caminho. O arquivo é igual nos três PCs:
+`clusters$` (pc-lamp-1 a 3) crie `~/ce/controller-vs.yaml` roteando **só pelo cabeçalho**, o que vale para qualquer caminho. O arquivo é igual nos três PCs:
 
 ```bash
 mkdir -p ~/ce
@@ -78,7 +78,7 @@ spec:
 EOF
 ```
 
-A DestinationRule original (`controller-dr.yaml`) também tem um erro: o subset `cloud1` seleciona pods com `cluster: cloud2`, mas o pod do CE do cloud1 tem `cluster: cloud1`. Sem correção, o subset fica vazio, e toda chamada com `cluster: cloud1` volta `503` (`no healthy upstream`). `clusters$` grave uma cópia corrigida:
+A DestinationRule original (`controller-dr.yaml`) também tem um erro: o subset `cloud1` seleciona pods com `cluster: cloud2`, mas o pod do CE do cloud1 tem `cluster: cloud1`. Sem correção, o subset fica vazio, e toda chamada com `cluster: cloud1` volta `503` (`no healthy upstream`). `clusters$` (pc-lamp-1 a 3) grave uma cópia corrigida:
 
 ```bash
 sed 's/cluster: cloud2/cluster: cloud1/' \
@@ -88,7 +88,7 @@ grep -A2 'name: cloud1' ~/ce/controller-dr.yaml       # cluster: cloud1
 
 ### 2. Revisar os ConfigMaps
 
-`clusters$` copie o ConfigMap e o manifesto do CE deste cluster para `~/ce/`. As mudanças são feitas nas cópias, como no M3:
+`clusters$` (pc-lamp-1 a 3) copie o ConfigMap e o manifesto do CE deste cluster para `~/ce/`. As mudanças são feitas nas cópias, como no M3:
 
 ```bash
 C=fog1
@@ -133,7 +133,7 @@ grep -E "image:|imagePullPolicy" ~/ce/controller-$C.yaml
 
 O CE do cloud1 **lê os YAMLs do MinIO e grava os metadados no Redis** ao iniciar (`metadata/MeteDataGenerator.java`). Por isso, ele sobe primeiro, depois do M3 completo.
 
-`cloud1$` primeiro; depois, os mesmos comandos no `fog1` e no `fog2`, com `C` trocado:
+`cloud1$` (pc-lamp-3) primeiro; depois, os mesmos comandos no `fog1` e no `fog2`, com `C` trocado:
 
 ```bash
 C=cloud1
@@ -150,17 +150,17 @@ kubectl -n $N logs -f controller-$C -c controller-$C      # Ctrl+C para sair
 
 `permission.yaml` dá ao CE acesso total ao cluster (`ClusterRole` com `*`). Isso é aceitável num laboratório isolado, não em produção.
 
-Confira os metadados:
+`cloud1$` (pc-lamp-3) confira os metadados:
 
 ```bash
-cloud1$ kubectl -n control-engine exec redis -c redis -- redis-cli --scan | head
+kubectl -n control-engine exec redis -c redis -- redis-cli --scan | head
 ```
 
 ### 4. Testes locais e entre clusters
 
 O gateway do CE (`controller-gateway.yaml`) só aceita o host `control-engine.control-engine.svc.cluster.local`, por isso o cabeçalho `Host`. Os testes saem do `carga`, como faria um usuário de fora dos clusters.
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -177,13 +177,13 @@ curl -s -H "$H" -H "cluster: cloud1" http://192.168.0.11/MicroFog/getClusterData
 
 ### 5. Experimento: o VS original
 
-`fog1$` aplique temporariamente o `controller-vs.yaml` **original**. Como a requisição entra pelo fog1, é o VS do fog1 que decide a rota:
+`fog1$` (pc-lamp-1) aplique temporariamente o `controller-vs.yaml` **original**. Como a requisição entra pelo fog1, é o VS do fog1 que decide a rota:
 
 ```bash
 kubectl -n control-engine apply -f ~/MicroFog/Prototype_Setup/control-engine-setup/controller-vs.yaml
 ```
 
-`carga$` repita a última chamada e veja o código HTTP:
+`carga$` (pc-lamp-5) repita a última chamada e veja o código HTTP:
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -191,29 +191,29 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -H "cluster: cloud1" http://192
 curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -H "cluster: cloud1" http://192.168.0.11/MicroFog/getDeviceData
 ```
 
-- Com `IMAGE_SOURCE=local`: espera-se **404** no `getClusterData`. A requisição entra pelo ingress gateway do fog1, e é no log dele que aparece o `NR` ("no route"):
+- Com `IMAGE_SOURCE=local`: espera-se **404** no `getClusterData`. A requisição entra pelo ingress gateway do fog1, e é no log dele que aparece o `NR` ("no route"). `fog1$` (pc-lamp-1):
 
   ```bash
-  fog1$ kubectl -n istio-system logs deploy/istio-ingressgateway --since=5m | grep -E ' 404 NR '
+  kubectl -n istio-system logs deploy/istio-ingressgateway --since=5m | grep -E ' 404 NR '
   ```
 
-- Com `IMAGE_SOURCE=upstream`: se a hipótese do passo 1 estiver certa, a imagem antiga responde no `getDeviceData` (`200`). Para testar, troque a imagem do CE do cloud1 pela dos autores e repita os dois `curl`:
+- Com `IMAGE_SOURCE=upstream`: se a hipótese do passo 1 estiver certa, a imagem antiga responde no `getDeviceData` (`200`). Para testar, troque a imagem do CE do cloud1 pela dos autores e repita os dois `curl`. `cloud1$` (pc-lamp-3):
 
   ```bash
-  cloud1$ cp ~/MicroFog/Prototype_Setup/control-engine-setup/controller-cloud1.yaml ~/ce/controller-cloud1-upstream.yaml
-  cloud1$ ~/set-images.sh upstream ~/ce/controller-cloud1-upstream.yaml
-  cloud1$ kubectl -n control-engine delete pod controller-cloud1
-  cloud1$ kubectl -n control-engine apply -f ~/ce/controller-cloud1-upstream.yaml
+  cp ~/MicroFog/Prototype_Setup/control-engine-setup/controller-cloud1.yaml ~/ce/controller-cloud1-upstream.yaml
+  ~/set-images.sh upstream ~/ce/controller-cloud1-upstream.yaml
+  kubectl -n control-engine delete pod controller-cloud1
+  kubectl -n control-engine apply -f ~/ce/controller-cloud1-upstream.yaml
   ```
 
-  Depois, volte à imagem escolhida:
+  Depois, `cloud1$` (pc-lamp-3) volte à imagem escolhida:
 
   ```bash
-  cloud1$ kubectl -n control-engine delete pod controller-cloud1
-  cloud1$ kubectl -n control-engine apply -f ~/ce/controller-cloud1.yaml
+  kubectl -n control-engine delete pod controller-cloud1
+  kubectl -n control-engine apply -f ~/ce/controller-cloud1.yaml
   ```
 
-`fog1$` volte para o VS do passo 1:
+`fog1$` (pc-lamp-1) volte para o VS do passo 1:
 
 ```bash
 kubectl -n control-engine apply -f ~/ce/controller-vs.yaml

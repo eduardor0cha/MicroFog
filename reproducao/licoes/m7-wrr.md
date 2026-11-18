@@ -25,7 +25,7 @@ Exemplo do artigo (Tabela 3): a2m2 com três instâncias em `fog1-worker3`, `fog
 
 ### 1. Instalar os addons
 
-`clusters$` (os addons vêm na distribuição do Istio):
+`clusters$` (pc-lamp-1 a 3) instale os addons, que vêm na distribuição do Istio:
 
 ```bash
 kubectl apply -f $ISTIO/samples/addons/prometheus.yaml
@@ -33,10 +33,10 @@ kubectl apply -f $ISTIO/samples/addons/kiali.yaml
 kubectl -n istio-system rollout status deploy/kiali
 ```
 
-O repositório também traz `kiali-setup/*.yaml` para expor o Kiali pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações. Por isso, use um port-forward. O `--address 0.0.0.0` deixa a porta aberta para os outros computadores do switch, e não só para o próprio PC. O comando ocupa o terminal até `Ctrl+C`:
+O repositório também traz `kiali-setup/*.yaml` para expor o Kiali pelo ingress, mas a porta 80 já é disputada pelo CE e pelas aplicações. Por isso, use um port-forward. O `--address 0.0.0.0` deixa a porta aberta para os outros computadores do switch, e não só para o próprio PC. O comando ocupa o terminal até `Ctrl+C`. `fog1$` (pc-lamp-1):
 
 ```bash
-fog1$ kubectl -n istio-system port-forward --address 0.0.0.0 svc/kiali 20001:20001
+kubectl -n istio-system port-forward --address 0.0.0.0 svc/kiali 20001:20001
 ```
 
 Abra `http://192.168.0.11:20001` no navegador de um computador ligado ao switch. Os PCs rodam Ubuntu Server, sem navegador.
@@ -45,31 +45,31 @@ Esta é uma instalação de Kiali **por cluster**: cada um mostra o tráfego vis
 
 ### 2. Ler os pesos que o CE gerou
 
-Com o app2 do M6 implantado:
+`clusters$` (pc-lamp-1 a 3) com o app2 do M6 implantado:
 
 ```bash
-clusters$ kubectl -n app2 get dr,vs -o yaml | grep -E -A3 "subsets:|weight:"
+kubectl -n app2 get dr,vs -o yaml | grep -E -A3 "subsets:|weight:"
 ```
 
 Anote os pesos esperados por instância/cluster.
 
 ### 3. Gerar carga
 
-A carga sai do PC `carga`, para não roubar CPU dos clusters medidos.
+A carga sai do PC `carga`, para não roubar CPU dos clusters medidos. `carga$` (pc-lamp-5) envie 600 requisições ao fog1:
 
 ```bash
-carga$ hey -n 600 -c 4 -m GET \
-    -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
-    -d '{"message":[65,68,67],"dataProcessingTime":30}' \
-    http://192.168.0.11/DummyM/getResults
+hey -n 600 -c 4 -m GET \
+  -H 'Host: a2m1.app2.svc.cluster.local' -H 'Content-Type: application/json' \
+  -d '{"message":[65,68,67],"dataProcessingTime":30}' \
+  http://192.168.0.11/DummyM/getResults
 ```
 
 ### 4. Contar as requisições por instância
 
-Cada microserviço de teste registra `Request received for processing` a cada requisição. Em cada cluster que tem instâncias do a2m2:
+`clusters$` (pc-lamp-1 a 3) cada microserviço de teste registra `Request received for processing` a cada requisição. Em cada cluster que tem instâncias do a2m2:
 
 ```bash
-clusters$ for p in $(kubectl -n app2 get pods -o name | grep a2m2); do
+for p in $(kubectl -n app2 get pods -o name | grep a2m2); do
          # sem -c: a injeção do Istio marca o container da aplicação como padrão
          echo "$p $(kubectl -n app2 logs $p --since=10m | grep -c 'Request received for processing')"
        done
@@ -83,7 +83,7 @@ Compare as contagens com os pesos do passo 2.
 
 ### 6. Guardar a configuração
 
-`carga$` copie `~/clusters`, `~/ce`, `~/stores` e `~/certs*` de cada PC, como no M1, passo 5:
+`carga$` (pc-lamp-5) copie `~/clusters`, `~/ce`, `~/stores` e `~/certs*` de cada PC, como no M1, passo 5:
 
 ```bash
 for h in fog1 fog2 cloud1; do

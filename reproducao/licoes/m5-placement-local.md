@@ -67,7 +67,7 @@ As diferenças entre esses timestamps são a matéria-prima das figuras do artig
 
 Os comandos `curl` desta lição saem do `carga`, como os de um usuário. Antes de submeter, consulte os recursos livres do cloud1.
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 H='Host: control-engine.control-engine.svc.cluster.local'
@@ -78,13 +78,13 @@ curl -s -H "$H" -H "cluster: cloud1" http://192.168.0.13/MicroFog/getClusterData
 
 ### 2. Submeter
 
-Antes, `cloud1$` guarde as chaves do Redis, para comparar depois do placement (passo 5):
+Antes, `cloud1$` (pc-lamp-3) guarde as chaves do Redis, para comparar depois do placement (passo 5):
 
 ```bash
 kubectl -n control-engine exec redis -c redis -- redis-cli --scan | sort > ~/redis-antes.txt
 ```
 
-`carga$` (o PR fica em `~/pr-hcapp.json`, reaproveitado nas próximas lições):
+`carga$` (pc-lamp-5) grave o PR e envie-o. Ele fica em `~/pr-hcapp.json` e é reaproveitado nas próximas lições:
 
 ```bash
 cd ~
@@ -103,19 +103,21 @@ Esperado: `Placement Request Successfully Submitted`.
 
 ### 3. Acompanhar
 
-Os dois comandos ficam rodando até `Ctrl+C`, então use **dois terminais** no cloud1. De preferência, abra-os antes do passo 2, para ver o fluxo desde o `NEW_PR_RECEIVED`:
+`cloud1$` (pc-lamp-3) os dois comandos ficam rodando até `Ctrl+C`, então use **dois terminais** no cloud1. De preferência, abra-os antes do passo 2, para ver o fluxo desde o `NEW_PR_RECEIVED`:
 
 ```bash
-cloud1$ kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1 | grep -E "[A-Z_]{6,} - [0-9]{13}|Created"
+kubectl -n control-engine logs -f controller-cloud1 -c controller-cloud1 | grep -E "[A-Z_]{6,} - [0-9]{13}|Created"
 ```
 
+`cloud1$` (pc-lamp-3), no segundo terminal:
+
 ```bash
-cloud1$ kubectl -n hcapp get pods -o wide -w
+kubectl -n hcapp get pods -o wide -w
 ```
 
 ### 4. Chamar a aplicação
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 # S1: hcm1 → hcm2
@@ -129,17 +131,17 @@ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/js
 
 ### 5. Limpar
 
-Para repetir o experimento, apague o namespace da aplicação. O `delete ns` só volta quando todos os pods terminaram:
+`cloud1$` (pc-lamp-3) para repetir o experimento, apague o namespace da aplicação. O `delete ns` só volta quando todos os pods terminaram:
 
 ```bash
-cloud1$ kubectl delete ns hcapp
+kubectl delete ns hcapp
 ```
 
-Confira se o CE guarda algum estado do placement anterior, no Redis ou em memória, e anote o que encontrar. No Redis, compare as chaves com as de antes do PR (passo 2):
+`cloud1$` (pc-lamp-3) confira se o CE guarda algum estado do placement anterior, no Redis ou em memória, e anote o que encontrar. No Redis, compare as chaves com as de antes do PR (passo 2):
 
 ```bash
-cloud1$ kubectl -n control-engine exec redis -c redis -- redis-cli --scan | sort > ~/redis-depois.txt
-cloud1$ diff ~/redis-antes.txt ~/redis-depois.txt      # chaves criadas pelo placement
+kubectl -n control-engine exec redis -c redis -- redis-cli --scan | sort > ~/redis-depois.txt
+diff ~/redis-antes.txt ~/redis-depois.txt      # chaves criadas pelo placement
 ```
 
 Em memória, procure campos estáticos e coleções nos controladores do CE:
@@ -152,29 +154,33 @@ grep -rn -E "static .*(Map|List|Set)<" ~/MicroFog/ControlEngine/src/main/java/co
 
 Com o `hcapp` apagado, mude `entryClusters` para `["fog1"]` e submeta **ao fog1**. Antes, consulte os recursos livres do fog1 e faça uma nova previsão: agora o cluster de entrada já roda Istio, CE e data stores.
 
-`carga$`:
+`carga$` (pc-lamp-5):
 
 ```bash
 curl -s -H "$H" -H "cluster: fog1" http://192.168.0.11/MicroFog/getClusterData | jq
 ```
 
+`fog1$` (pc-lamp-1) acompanhe os pods num terminal à parte:
+
 ```bash
-fog1$ kubectl -n hcapp get pods -o wide -w      # num terminal à parte
+kubectl -n hcapp get pods -o wide -w
 ```
 
+`carga$` (pc-lamp-5) submeta o PR ao fog1:
+
 ```bash
-carga$ cd ~ && sed 's/"cloud1"/"fog1"/' pr-hcapp.json > pr-hcapp-fog1.json
-carga$ curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
-         -d @pr-hcapp-fog1.json http://192.168.0.11/MicroFog/addPR
+cd ~ && sed 's/"cloud1"/"fog1"/' pr-hcapp.json > pr-hcapp-fog1.json
+curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
+  -d @pr-hcapp-fog1.json http://192.168.0.11/MicroFog/addPR
 ```
 
-Chame a aplicação pelo fog1:
+`carga$` (pc-lamp-5) chame a aplicação pelo fog1:
 
 ```bash
-carga$ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
-         -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
-carga$ curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
-         -X POST http://192.168.0.11/DummyM/addData -d '{"message":[65,68,67],"dataProcessingTime":30}'
+curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
+  -X GET http://192.168.0.11/DummyM/getResults -d '{"message":[65,68,67],"dataProcessingTime":30}'
+curl -s -H 'Host: hcm1.hcapp.svc.cluster.local' -H 'Content-Type: application/json' \
+  -X POST http://192.168.0.11/DummyM/addData -d '{"message":[65,68,67],"dataProcessingTime":30}'
 ```
 
 ## O que observar

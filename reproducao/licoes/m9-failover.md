@@ -24,14 +24,14 @@ Os CEs precisam estar no modo distribuído (o [M8](m8-centralizado.md), passo 8,
 
 Cada repetição usa o mesmo PR do hcApp com entrada no fog1, do [M5](m5-placement-local.md), passo 6 (`~/pr-hcapp-fog1.json` no `carga`).
 
-Deixe o log do CE do fog1 aberto num terminal, filtrado pelos eventos que interessam:
+`fog1$` (pc-lamp-1) deixe o log do CE do fog1 aberto num terminal, filtrado pelos eventos que interessam:
 
 ```bash
-fog1$ kubectl -n control-engine logs -f controller-fog1 -c controller-fog1 \
-        | grep -E "RETRIEVE_REDIS_DATA_(BEGIN|END)|LOAD_YAML_FILE_(BEGIN|COMPLETED)"
+kubectl -n control-engine logs -f controller-fog1 -c controller-fog1 \
+  | grep -E "RETRIEVE_REDIS_DATA_(BEGIN|END)|LOAD_YAML_FILE_(BEGIN|COMPLETED)"
 ```
 
-Cada repetição apaga o `hcapp` e submete o PR. `carga$`:
+Cada repetição apaga o `hcapp` e submete o PR. `carga$` (pc-lamp-5):
 
 ```bash
 ssh fog1 kubectl delete ns hcapp --ignore-not-found
@@ -46,33 +46,40 @@ curl -s -H "$H" -H "cluster: fog1" -H 'Content-Type: application/json' \
 Os intervalos são a diferença entre os timestamps em milissegundos de `BEGIN` e `END`/`COMPLETED`.
 
 1. **Cenário 1.** Faça a repetição com tudo no ar e anote os intervalos `RETRIEVE_REDIS_DATA_BEGIN → END` e `LOAD_YAML_FILE_BEGIN → COMPLETED`.
-2. **Cenário 2.** Derrube os stores do fog1. Eles são Pods "soltos", não Deployments, então nada os recria sozinho. Os manifestos para recriá-los estão em `~/stores/` (M3):
+2. **Cenário 2.** Derrube os stores do fog1. Eles são Pods "soltos", não Deployments, então nada os recria sozinho. Os manifestos para recriá-los estão em `~/stores/` (M3). `fog1$` (pc-lamp-1):
 
    ```bash
-   fog1$ kubectl -n control-engine delete pod minio-fog1 redis-replica
+   kubectl -n control-engine delete pod minio-fog1 redis-replica
    ```
 
    Repita o PR e anote os mesmos intervalos.
-3. **Cenário 3.** Derrube também os do fog2 e repita:
+3. **Cenário 3.** Derrube também os do fog2 e repita. `fog2$` (pc-lamp-2):
 
    ```bash
-   fog2$ kubectl -n control-engine delete pod minio-fog2 redis-replica
+   kubectl -n control-engine delete pod minio-fog2 redis-replica
    ```
 
-4. Restaure tudo e confirme que o CE volta a usar o store local. O MinIO guarda os dados num `hostPath` do nó KinD, que sobrevive à remoção do pod, então o bucket deve continuar lá:
+4. Restaure tudo e confirme que o CE volta a usar o store local. O MinIO guarda os dados num `hostPath` do nó KinD, que sobrevive à remoção do pod, então o bucket deve continuar lá.
+
+   `fog1$` (pc-lamp-1):
 
    ```bash
-   fog1$ kubectl -n control-engine apply -f ~/stores/minio-setup/minio_fog1.yaml -f ~/stores/redis-setup/redis-replica.yaml
-   fog2$ kubectl -n control-engine apply -f ~/stores/minio-setup/minio_fog2.yaml -f ~/stores/redis-setup/redis-replica.yaml
+   kubectl -n control-engine apply -f ~/stores/minio-setup/minio_fog1.yaml -f ~/stores/redis-setup/redis-replica.yaml
+   ```
+
+   `fog2$` (pc-lamp-2):
+
+   ```bash
+   kubectl -n control-engine apply -f ~/stores/minio-setup/minio_fog2.yaml -f ~/stores/redis-setup/redis-replica.yaml
    ```
 
    Com o port-forward do M3, passo 2, ativo, confira os arquivos (`fog1$ mc ls fog1/microfog-app-metadata/hcApp/`). Se a lista vier vazia, porque o pod voltou num nó diferente, refaça no fog1 e no fog2 o passo 3 do M3 (bucket, versionamento e replicação): a opção `existing-objects` traz os arquivos de volta dos outros servidores.
 
-Para ver **para onde** o tráfego foi, além do tempo:
+`fog1$` (pc-lamp-1) para ver **para onde** o tráfego foi, além do tempo:
 
 ```bash
-fog1$ istioctl proxy-config endpoints controller-fog1.control-engine \
-        --cluster "outbound|9000||minio.control-engine.svc.cluster.local"
+istioctl proxy-config endpoints controller-fog1.control-engine \
+  --cluster "outbound|9000||minio.control-engine.svc.cluster.local"
 ```
 
 A coluna de status mostra os endpoints ejetados (`UNHEALTHY`/outlier) e os ativos.
