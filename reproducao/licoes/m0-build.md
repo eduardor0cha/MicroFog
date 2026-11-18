@@ -200,6 +200,7 @@ Se o build falhar por causa de dependências de 2022, **não pare o plano**: sig
 | `Could not resolve dependencies` | Artefato de 2022 removido de um repositório Maven | Veja qual artefato e procure a versão mais próxima. Registre a mudança |
 | `denied: permission_denied` no push | Token sem `write:packages` | Gere outro token |
 | `denied` no push com o token certo | Você não é membro da organização, ou não tem **Write** no pacote | Passo 1 (convite) e passo 4 (*Manage access*) |
+| `denied` só no fim do primeiro push de um pacote novo, depois de todas as camadas `Pushed`, e o pacote aparece criado na organização | O GHCR às vezes recusa a primeira escrita logo depois de criar o pacote | Repita o `docker push` da mesma tag. Se foi no `build-dummies.sh`, rode o script de novo |
 | `invalid reference format` no build | `GHCR_ORG` vazia, ou com maiúsculas | `echo "$GHCR_ORG"`; passo 1 |
 | Pod depois em `ErrImagePull` | Pacote ainda privado no GHCR | Passo 4 |
 
